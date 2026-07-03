@@ -27,6 +27,8 @@ import {
 } from "./components/icons";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { LanguageToggle } from "./components/LanguageToggle";
+import { LensOverlay } from "./components/LensOverlay";
+import { LensToggle } from "./components/LensToggle";
 import { LLMDetail } from "./components/LLMDetail";
 import { MobileShell } from "./components/MobileShell";
 import { ScenarioBuilder } from "./components/ScenarioBuilder";
@@ -221,6 +223,8 @@ export default function App() {
         {detail === "rag" && <RagPipelinePanel />}
         {detail === "pageindex" && <PageIndexPipelinePanel />}
       </ReactFlowProvider>
+      {/* 095-harness-loop-lens — the lens legend + Loop readout, over the canvas. */}
+      <LensOverlay onLearnMore={() => setPage("learn")} />
       {detail === "agent" && <AgentDetail view={view} onClose={closeDetail} />}
       {detail === "llm" && <LLMDetail onClose={closeDetail} />}
       {/* 076-station-full-views — drill-ins for the four remaining real stations. */}
@@ -279,6 +283,8 @@ export default function App() {
         {/* 061-scenario-builder — the à-la-carte component palette (popover) replaces
             the maturity-ladder segmented control + the track switcher. */}
         <ScenarioBuilder />
+        {/* 095-harness-loop-lens — the Harness ⇄ Loop lens, next to Build. */}
+        <LensToggle />
         <div className="hidden shrink-0 xl:flex">
           <CloudToggle />
         </div>

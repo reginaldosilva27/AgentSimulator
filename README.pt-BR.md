@@ -6,6 +6,8 @@
 
 ### Veja uma mensagem de chat atravessar um agente de IA **real** — ao vivo, etapa por etapa.
 
+#### 🗺️ **Harness Engineering** · 🔄 **Loop Engineering** — um laboratório prático das duas disciplinas por trás de todo agente de IA.
+
 ### 🚀 [**Testar a demo ao vivo →**](https://reginaldosilva27.github.io/AgentSimulator/)
 
 Sem instalar nada, sem chave — uma demonstração mockada que **reproduz execuções reais capturadas**
@@ -22,7 +24,13 @@ por um grafo de "estações" e deixa você **clicar em qualquer uma para inspeci
 que passam por ela. Nada é simulado — o raciocínio, os embeddings, o vector store, o banco
 relacional e as chamadas de ferramentas são todos reais.
 
-> Inspirado no [Transformer Explainer](https://github.com/poloclub/transformer-explainer) — mas para **Engenharia de IA**.
+Mais que uma demo, é uma **porta de entrada para duas disciplinas**: **Harness Engineering** (o
+*cabeamento* — as ferramentas, o RAG, o MCP, a memória, a janela de contexto e as permissões às
+quais o modelo está preso) e **Loop Engineering** (o *ciclo* — como o agente raciocina, age, observa
+e sabe a hora de parar). O canvas é o **mapa** (harness, no espaço); a execução animada é a
+**jornada** (loop, no tempo).
+
+> Inspirado no [Transformer Explainer](https://github.com/poloclub/transformer-explainer) — mas um laboratório prático de **Harness & Loop Engineering**.
 
 [![CI](https://github.com/reginaldosilva27/AgentSimulator/actions/workflows/ci.yml/badge.svg)](https://github.com/reginaldosilva27/AgentSimulator/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white)
@@ -42,8 +50,26 @@ relacional e as chamadas de ferramentas são todos reais.
 
 ---
 
+## 🗺️🔄 Aprenda as duas disciplinas por trás de todo agente de IA
+
+A engenharia de LLM moderna sobe uma escada — **Prompt → Context → Harness → Loop**. Os dois últimos
+degraus são onde os agentes são de fato ganhos ou perdidos, e são invisíveis na maioria dos
+tutoriais. Este simulador os torna **visíveis, lado a lado**:
+
+| 🗺️ **Harness Engineering** — *o cabeamento (espaço)* | 🔄 **Loop Engineering** — *o ciclo (tempo)* |
+|---|---|
+| Tudo que não é o modelo: ferramentas, RAG, MCP, memória, a janela de contexto, guardrails, permissões. *"Agent = Model + Harness."* | Como o agente repete: **raciocina → age → observa**, quando ele para, como se recupera de falhas. *O que separa um agente ótimo de um medíocre.* |
+| Veja como o **mapa** de estações em que você clica e inspeciona. | Veja como a **jornada** — avance por cada iteração, dê replay, veja o loop ReAct girar. |
+
+Alterne a lente **Harness ⇄ Loop** no app para acender um eixo por vez — depois leia a teoria
+completa no **[Modo Learn](#-modo-learn)**. Novo nos termos? Comece por
+[🎓 O que você vai aprender](#-o-que-você-vai-aprender).
+
+---
+
 ## 📑 Sumário
 
+- [🗺️🔄 Harness & Loop Engineering](#-aprenda-as-duas-disciplinas-por-trás-de-todo-agente-de-ia)
 - [✨ Destaques](#-destaques)
 - [🔭 O que ele faz](#-o-que-ele-faz)
 - [🪜 A escada de maturidade — Simples · Intermediário · Avançado](#-a-escada-de-maturidade--simples--intermediário--avançado)

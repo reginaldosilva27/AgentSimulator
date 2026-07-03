@@ -783,6 +783,114 @@ const SECTIONS_SRC: SectionSrc[] = [
       },
     ],
   },
+  // 096-learn-harness-loop — the conceptual spine: the prompt → context → harness →
+  // loop ladder, and the two disciplines this simulator makes visible. Grounded in
+  // the app's own stations (the harness) and its ReAct loop (the loop).
+  {
+    id: "ai-engineering-disciplines",
+    title: { en: "AI Engineering Disciplines", pt: "Disciplinas de Engenharia de IA" },
+    icon: "🧭",
+    accent: "var(--color-teal)",
+    intro: {
+      en: "Beyond the model, building an agent is two engineering jobs: the harness (the wiring the model is bolted to) and the loop (how it iterates). This simulator is a lab for both.",
+      pt: "Além do modelo, construir um agente são dois trabalhos de engenharia: o harness (o cabeamento ao qual o modelo está preso) e o loop (como ele itera). Este simulador é um laboratório para os dois.",
+    },
+    topics: [
+      {
+        id: "engineering-ladder",
+        title: { en: "The Engineering Ladder", pt: "A Escada da Engenharia" },
+        what: {
+          en: "Modern LLM engineering climbs a ladder of four disciplines: prompt → context → harness → loop. Each rung wraps the one below it.",
+          pt: "A engenharia de LLM moderna sobe uma escada de quatro disciplinas: prompt → context → harness → loop. Cada degrau envolve o anterior.",
+        },
+        why: {
+          en: "Naming the rungs makes it clear where an agent actually succeeds or fails. Most tutorials stop at prompting; real agents are won on the top two rungs — and those are exactly what this simulator shows.",
+          pt: "Nomear os degraus deixa claro onde um agente de fato acerta ou erra. A maioria dos tutoriais para no prompt; agentes reais são ganhos nos dois degraus de cima — e é justamente isso que este simulador mostra.",
+        },
+        how: {
+          en: "Prompt engineering crafts the instruction. Context engineering curates what enters the window — 'the smallest set of high-signal tokens'. Harness engineering builds everything around the model (tools, retrieval, memory, permissions, the runtime). Loop engineering designs the reason → act → observe cycle: when to iterate, when to stop, how to recover. This simulator makes the last two — the harness and the loop — visible side by side: the canvas is the harness (in space), the animated run is the loop (in time).",
+          pt: "Prompt engineering elabora a instrução. Context engineering seleciona o que entra na janela — 'o menor conjunto de tokens de alto sinal'. Harness engineering constrói tudo em volta do modelo (ferramentas, recuperação, memória, permissões, o runtime). Loop engineering projeta o ciclo raciocina → age → observa: quando iterar, quando parar, como se recuperar. Este simulador torna os dois últimos — o harness e o loop — visíveis lado a lado: o canvas é o harness (no espaço), a execução animada é o loop (no tempo).",
+        },
+        options: {
+          en: "Some teams collapse context into 'prompt engineering' and harness into 'agent framework'; the four-rung split is a lens, not a law. What matters is recognizing that a great model in a poor harness/loop loses to a modest model in a great one.",
+          pt: "Algumas equipes juntam context em 'prompt engineering' e harness em 'framework de agente'; a divisão em quatro degraus é uma lente, não uma lei. O que importa é reconhecer que um ótimo modelo num harness/loop ruim perde para um modelo modesto num ótimo.",
+        },
+        links: [
+          {
+            label: "Anthropic — Effective context engineering",
+            url: "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+          },
+          {
+            label: "Anthropic — Building effective agents",
+            url: "https://www.anthropic.com/engineering/building-effective-agents",
+          },
+        ],
+        where: "frontend/src/lib/{harness,loop,lens}.ts · the Harness ⇄ Loop lens (header)",
+      },
+      {
+        id: "harness-engineering",
+        title: { en: "Harness Engineering", pt: "Engenharia de Harness" },
+        what: {
+          en: "The harness is everything that isn't the model — the scaffolding that turns a raw LLM into a working agent. 'Agent = Model + Harness. If you're not the model, you're the harness.'",
+          pt: "O harness é tudo que não é o modelo — o andaime que transforma um LLM cru num agente funcional. 'Agent = Model + Harness. Se você não é o modelo, você é o harness.'",
+        },
+        why: {
+          en: "The model is stateless and can't touch the world on its own. The harness gives it tools, knowledge, memory and guardrails — and a decent model with an excellent harness beats a superior model in a poor one.",
+          pt: "O modelo não tem estado e não toca o mundo sozinho. O harness lhe dá ferramentas, conhecimento, memória e guardrails — e um modelo decente com um ótimo harness supera um modelo superior num harness ruim.",
+        },
+        how: {
+          en: "Every station on this canvas is a piece of the harness. Tools: the MCP server exposes calculator/time/kb_lookup, plus search_knowledge_base. Knowledge: the RAG vector DB (and ingestion) the agent can retrieve from. Memory: the App Database holds long-term conversation history across turns. Context: the context-window budget assembles the smallest useful prompt. Permissions: the guardrails prompt layer and the network edge. Model: the LLM itself. The harness is the 'LLM as the new OS' — the firmware, drivers and filesystem around the reasoning core.",
+          pt: "Cada estação neste canvas é uma peça do harness. Ferramentas: o servidor MCP expõe calculator/time/kb_lookup, além de search_knowledge_base. Conhecimento: o vector DB de RAG (e a ingestão) de onde o agente recupera. Memória: o App Database guarda o histórico de longo prazo da conversa entre turnos. Contexto: o orçamento da janela de contexto monta o menor prompt útil. Permissões: a camada de guardrails e a borda de rede. Modelo: o próprio LLM. O harness é o 'LLM como o novo SO' — o firmware, os drivers e o sistema de arquivos ao redor do núcleo de raciocínio.",
+        },
+        options: {
+          en: "Harnesses range from thin (a single tool-calling loop) to thick (sandboxed code execution, a virtual filesystem, sub-agents, progress files for multi-session work). Anthropic's long-running-agent harness adds an initializer agent + a progress file so a fresh context window can resume work. More harness isn't always better — every line should trace back to a real failure it prevents.",
+          pt: "Harnesses vão de finos (um único loop de tool-calling) a grossos (execução de código em sandbox, sistema de arquivos virtual, sub-agentes, arquivos de progresso para trabalho multi-sessão). O harness de agentes de longa duração da Anthropic adiciona um agente inicializador + um arquivo de progresso para que uma janela de contexto nova retome o trabalho. Mais harness nem sempre é melhor — cada linha deveria remeter a uma falha real que ela evita.",
+        },
+        links: [
+          {
+            label: "Anthropic — Effective harnesses for long-running agents",
+            url: "https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents",
+          },
+          {
+            label: "Addy Osmani — Agent Harness Engineering",
+            url: "https://addyosmani.com/blog/agent-harness-engineering/",
+          },
+        ],
+        where: "backend/app/agent/graph.py · agent/tools.py · mcp/ · rag/ · db/store.py",
+      },
+      {
+        id: "loop-engineering",
+        title: { en: "Loop Engineering", pt: "Engenharia de Loop" },
+        what: {
+          en: "The loop is how the agent iterates: reason → act → observe, repeating until a goal is met or a stop condition fires. It's the difference between answering once and making progress.",
+          pt: "O loop é como o agente itera: raciocina → age → observa, repetindo até a meta ser atingida ou uma condição de parada disparar. É a diferença entre responder uma vez e fazer progresso.",
+        },
+        why: {
+          en: "Real tasks aren't one-shot — step three depends on what step two returned. The loop is what lets a language model fix a failing test, refine a search, or recover from a tool error. Loop design separates a great agent from a mediocre one, often more than the model does.",
+          pt: "Tarefas reais não são de um tiro só — o passo três depende do que o passo dois retornou. O loop é o que permite a um modelo de linguagem corrigir um teste que falha, refinar uma busca ou se recuperar de um erro de ferramenta. O projeto do loop separa um agente ótimo de um medíocre, muitas vezes mais do que o modelo.",
+        },
+        how: {
+          en: "This app runs a bounded ReAct loop: route → think ⇄ tools → generate → respond. The agent reasons in 'think'; if it elects a tool call it loops back to 'tools' and observes the result, then thinks again. A stop condition bounds it: _should_continue loops only while there are pending calls and iterations ≤ MAX_ITERATIONS (3), so it can never spin forever. Failure handling is real too — simulate_failure injects a tool error or model timeout so you can watch the loop retry, back off, open a circuit breaker and fall back. Open the Harness ⇄ Loop lens (Loop) to see the iteration count and stop reason on the canvas.",
+          pt: "Este app roda um loop ReAct limitado: route → think ⇄ tools → generate → respond. O agente raciocina no 'think'; se ele elege uma chamada de ferramenta, volta para 'tools' e observa o resultado, então pensa de novo. Uma condição de parada o limita: _should_continue faz o loop só enquanto há chamadas pendentes e iterations ≤ MAX_ITERATIONS (3), então ele nunca gira para sempre. O tratamento de falhas também é real — simulate_failure injeta um erro de ferramenta ou timeout do modelo para você ver o loop tentar de novo, esperar (backoff), abrir um disjuntor e cair no fallback. Abra a lente Harness ⇄ Loop (Loop) para ver a contagem de iterações e o motivo da parada no canvas.",
+        },
+        options: {
+          en: "Beyond the plain agent loop there are richer loops: a reflection loop (the agent critiques its own output), a verification loop (a grader scores against a rubric), an event-driven loop (external triggers), and 'loopcraft' — stacking these so production traces feed back and improve the harness itself. Each adds reliability at the cost of latency and tokens.",
+          pt: "Além do loop simples há loops mais ricos: um loop de reflexão (o agente critica a própria saída), um loop de verificação (um avaliador pontua contra uma rubrica), um loop dirigido por eventos (gatilhos externos) e o 'loopcraft' — empilhar esses loops para que traços de produção retroalimentem e melhorem o próprio harness. Cada um adiciona confiabilidade ao custo de latência e tokens.",
+        },
+        links: [
+          {
+            label: "LangChain — The Art of Loop Engineering",
+            url: "https://www.langchain.com/blog/the-art-of-loop-engineering",
+          },
+          {
+            label: "ReAct — Synergizing Reasoning and Acting (paper)",
+            url: "https://arxiv.org/abs/2210.03629",
+          },
+        ],
+        where: "backend/app/agent/graph.py (_should_continue, MAX_ITERATIONS) · agent/resilience.py (simulate_failure)",
+      },
+    ],
+  },
   {
     id: "security",
     title: { en: "Security per Layer", pt: "Segurança por Camada" },

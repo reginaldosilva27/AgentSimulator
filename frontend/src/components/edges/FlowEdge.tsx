@@ -19,6 +19,8 @@ interface FlowEdgeData {
   reverse?: boolean; // packet travels target → source
   stream?: boolean; // SSE response flowing back to the client
   selected?: boolean; // 085 — this hop's detail is open in the Inspector
+  loop?: boolean; // 095 — this hop is part of the reason→act→observe cycle (Loop lens)
+  faded?: boolean; // 095 — Harness lens fades the wiring (structure, not flow)
   [key: string]: unknown;
 }
 
@@ -44,7 +46,9 @@ export function FlowEdge(props: EdgeProps) {
   const active = Boolean(data.active);
   const stream = Boolean(data.stream);
   const selected = Boolean(data.selected); // 085 — hop detail open in the Inspector
-  const lit = active || stream || selected; // animating or selected; quiet otherwise
+  const loop = Boolean(data.loop); // 095 — a reason→act→observe edge under the Loop lens
+  const faded = Boolean(data.faded); // 095 — Harness lens: the wiring recedes
+  const lit = active || stream || selected || loop; // animating/selected/loop; quiet otherwise
   const comm = data.comm;
   const commColor = comm === "async" ? STREAM_COLOR : SYNC_COLOR;
 
@@ -74,11 +78,11 @@ export function FlowEdge(props: EdgeProps) {
         path={path}
         markerEnd={markerEnd}
         style={{
-          stroke: selected ? accent : strokeColor,
+          stroke: selected || loop ? accent : strokeColor,
           strokeWidth: selected ? 3 : lit ? 2.5 : 1.5,
           strokeDasharray: stroke.dashed ? "5 5" : undefined,
-          opacity: lit ? 1 : hovered ? 0.9 : 0.6,
-          filter: lit ? `drop-shadow(0 0 6px ${selected ? accent : strokeColor})` : "none",
+          opacity: lit ? 1 : faded ? 0.18 : hovered ? 0.9 : 0.6,
+          filter: lit ? `drop-shadow(0 0 6px ${selected || loop ? accent : strokeColor})` : "none",
           transition: "stroke 0.2s ease, opacity 0.2s ease",
         }}
       />

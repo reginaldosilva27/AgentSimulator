@@ -5,6 +5,7 @@ import { useT } from "../../i18n";
 import { useAgentAnatomy } from "../../lib/agentAnatomy";
 import { formatTokens, formatUsd } from "../../lib/cost";
 import type { StationRuntime, UsageTotals } from "../../lib/derive";
+import { HARNESS_ROLE_COLOR } from "../../lib/harness";
 import { NODE_WIDTH } from "../../lib/layout";
 import { formatLatency } from "../../lib/time";
 import { READOUT_GLOSSARY_KEY, type StationId, type StationMeta } from "../../lib/stations";
@@ -24,6 +25,19 @@ export interface StationNodeData {
   width?: number; // narrower for advanced-rung sub-agent nodes; defaults to NODE_WIDTH
   comingSoon: boolean; // 008 preview node — non-executing, rendered dashed/dimmed
   usage?: UsageTotals; // 011-token-cost — set on the LLM node only
+  // 095-harness-loop-lens — Harness lens: the station's harness-role facet (badge
+  // label + glossary hint + role color; `core` marks the Agent as the runtime core
+  // of the wider harness, with its Context-window chip). Undefined otherwise.
+  // Loop lens: recede pure-harness stations (`dimmed`) so the cycle pops.
+  harness?: {
+    label: string;
+    hint: string;
+    color: string;
+    core?: boolean;
+    contextChip?: string;
+    contextHint?: string;
+  };
+  dimmed?: boolean;
   [key: string]: unknown;
 }
 
@@ -56,7 +70,7 @@ const HAS_DETAIL: Partial<Record<StationId, boolean>> = {
 };
 
 export function StationNode(props: NodeProps) {
-  const { meta, runtime, isActive, isEmphasized, readout, isSelected, expanded, height, width, comingSoon, usage } =
+  const { meta, runtime, isActive, isEmphasized, readout, isSelected, expanded, height, width, comingSoon, usage, harness, dimmed } =
     props.data as StationNodeData;
   const t = useT();
   const toggleExpand = useSimulator((s) => s.toggleExpand);
@@ -91,7 +105,15 @@ export function StationNode(props: NodeProps) {
   const blocked = runtime.status === "blocked";
   const WARN = "var(--color-warn)";
   const accent = meta.accent;
-  const borderColor = blocked ? WARN : spotlit ? accent : "var(--color-line)";
+  // 095 — under the Harness lens, tint the box border by the station's role color
+  // so the canvas reads as a color-coded parts map (unless it's the live spotlight).
+  const borderColor = blocked
+    ? WARN
+    : spotlit
+      ? accent
+      : harness
+        ? harness.color
+        : "var(--color-line)";
   const dotColor = blocked ? WARN : spotlit ? accent : "var(--color-faint)";
 
   // The collapsed readout is dense jargon ("decision: answer", "top-4 · score
@@ -128,7 +150,10 @@ export function StationNode(props: NodeProps) {
           // The narrated node stays at full opacity so it lifts out of the
           // dimmed neighbours even when it is not the live spotlight (014). A
           // blocked node (093) also stays full-opacity so the stop stands out.
-          opacity: comingSoon ? 0.5 : spotlit || emphasized || blocked ? 1 : 0.66,
+          // 095 — the Loop lens recedes pure-harness stations (`dimmed`) further,
+          // so the reason→act→observe cycle reads as the figure against the ground;
+          // the Harness lens keeps every station vivid so its role color reads.
+          opacity: comingSoon ? 0.5 : spotlit || emphasized || blocked ? 1 : dimmed ? 0.28 : harness ? 0.95 : 0.66,
         }}
       >
         <Handle id="left" type="target" position={Position.Left} style={{ opacity: 0, border: "none" }} />
@@ -201,14 +226,41 @@ export function StationNode(props: NodeProps) {
           {meta.subtitle}
         </div>
 
-        <div className="mt-1.5 flex items-center gap-1.5">
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
           <span
             title={t.glossary[meta.tag]}
-            className="inline-flex cursor-help rounded border px-1.5 py-px font-mono text-[9px] uppercase tracking-wide"
+            className="inline-flex cursor-help whitespace-nowrap rounded border px-1.5 py-px font-mono text-[9px] uppercase tracking-wide"
             style={{ borderColor: `color-mix(in srgb, ${accent} 33%, transparent)`, color: accent }}
           >
             {meta.tag}
           </span>
+          {/* 095-harness-loop-lens — the harness-role badge (Harness lens only),
+              filled with the role color + a glossary hint on hover. The Agent is
+              relabelled as the runtime CORE, and carries a Context-window chip so
+              the nesting (context engineering ⊂ Agent Harness) is visible. */}
+          {harness && (
+            <span
+              title={harness.hint}
+              data-testid="harness-role-badge"
+              className="inline-flex cursor-help whitespace-nowrap rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide"
+              style={{ background: harness.color, color: "var(--color-base)" }}
+            >
+              {harness.label}
+            </span>
+          )}
+          {harness?.core && harness.contextChip && (
+            <span
+              title={harness.contextHint}
+              data-testid="harness-context-chip"
+              className="inline-flex cursor-help whitespace-nowrap rounded-full border border-dashed px-1.5 py-px text-[9px] font-medium tracking-wide"
+              style={{
+                borderColor: `color-mix(in srgb, ${HARNESS_ROLE_COLOR.context} 55%, transparent)`,
+                color: HARNESS_ROLE_COLOR.context,
+              }}
+            >
+              {harness.contextChip}
+            </span>
+          )}
           {comingSoon && (
             <span
               className="inline-flex rounded-full border border-dashed px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide"

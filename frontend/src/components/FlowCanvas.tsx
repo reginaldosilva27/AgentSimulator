@@ -15,7 +15,10 @@ import { cloudValue, useCloud } from "../lib/cloud";
 import { formatTokens, formatUsd } from "../lib/cost";
 import type { DerivedView, StationRuntime, UsageTotals } from "../lib/derive";
 import { hasUploadActivity } from "../lib/derive";
+import { HARNESS_ROLE, HARNESS_ROLE_COLOR } from "../lib/harness";
 import { computeLayout } from "../lib/layout";
+import { useLens } from "../lib/lens";
+import { isLoopStation } from "../lib/loop";
 import { useResolvedSelection } from "../lib/selection";
 import { useSettings } from "../lib/settings";
 import {
@@ -64,6 +67,9 @@ export function FlowCanvas({ view, selected, onSelect }: FlowCanvasProps) {
   // the selection, previews are their station being selected.
   const sel = useResolvedSelection();
   const mode = useSettings((s) => s.mode);
+  // 095-harness-loop-lens — the active lens reframes emphasis only (harness-role
+  // badges / loop dimming + loop-edge highlight). `all` leaves everything untouched.
+  const lens = useLens((s) => s.mode);
   const expanded = useSimulator((s) => s.expanded);
   const events = useSimulator((s) => s.events);
   // 085-hop-communication-detail — the selected hop (edge id) + its setter, so
@@ -86,8 +92,8 @@ export function FlowCanvas({ view, selected, onSelect }: FlowCanvasProps) {
 
   const expandedSet = useMemo(() => new Set(expanded), [expanded]);
   const layout = useMemo(
-    () => computeLayout(expandedSet, sel, showUpload),
-    [expandedSet, sel, showUpload],
+    () => computeLayout(expandedSet, sel, showUpload, lens === "harness"),
+    [expandedSet, sel, showUpload, lens],
   );
 
   const nodes: Node[] = useMemo(() => {
@@ -154,13 +160,36 @@ export function FlowCanvas({ view, selected, onSelect }: FlowCanvasProps) {
         // LLM calls — the aggregate spans agent.think + llm.generate, so thread it
         // in from the projection rather than recomputing per-station.
         usage: meta.id === "llm" ? view.usage : undefined,
+        // 095-harness-loop-lens — Harness lens: color the station by its harness
+        // role (a parts map in space). The Agent is special-cased as the runtime
+        // CORE ("Agent Harness"), with a Context chip showing context engineering
+        // nests inside it. Loop lens: dim the pure-harness stations so the
+        // reason→act→observe cycle stands out. All undefined/false under `all`.
+        harness:
+          lens === "harness"
+            ? meta.id === "agent"
+              ? {
+                  label: t.lens.core,
+                  hint: t.lens.coreHint,
+                  color: HARNESS_ROLE_COLOR[HARNESS_ROLE[meta.id]],
+                  core: true,
+                  contextChip: t.lens.contextChip,
+                  contextHint: t.lens.contextHint,
+                }
+              : {
+                  label: t.lens.role[HARNESS_ROLE[meta.id]],
+                  hint: t.lens.roleHint[HARNESS_ROLE[meta.id]],
+                  color: HARNESS_ROLE_COLOR[HARNESS_ROLE[meta.id]],
+                }
+            : undefined,
+        dimmed: lens === "loop" && !isLoopStation(meta.id),
       },
       draggable: false,
       zIndex: 1,
     }));
 
     return [boundaryNode, frontierNode, ...tierNodes, ...stationNodes];
-  }, [view, selected, stations, tiers, boundary, publicFrontier, cloud, ro, layout, expandedSet]);
+  }, [view, selected, stations, tiers, boundary, publicFrontier, cloud, ro, layout, expandedSet, lens, t]);
 
   const edges: Edge[] = useMemo(
     () =>
@@ -204,6 +233,12 @@ export function FlowCanvas({ view, selected, onSelect }: FlowCanvasProps) {
             stream: id === "frontend-backend" && view.streaming && mode === "stream",
             // 085 — highlight the edge whose hop detail is open in the Inspector.
             selected: id === selectedHop,
+            // 095-harness-loop-lens — under the Loop lens, highlight the edges that
+            // ARE the reason→act→observe cycle (both endpoints are loop stations).
+            loop: lens === "loop" && isLoopStation(hop.source) && isLoopStation(hop.target),
+            // Under the Harness lens, fade the arrows — the harness view is about
+            // structure (parts in space), not flow, so the wiring recedes.
+            faded: lens === "harness",
           },
           markerEnd: {
             type: MarkerType.ArrowClosed,
@@ -211,7 +246,7 @@ export function FlowCanvas({ view, selected, onSelect }: FlowCanvasProps) {
           },
         };
       }),
-    [view, hops, stationById, mode, comms, selectedHop],
+    [view, hops, stationById, mode, comms, selectedHop, lens],
   );
 
   return (

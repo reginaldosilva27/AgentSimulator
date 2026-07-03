@@ -7,6 +7,54 @@ import type { TimelinePhase } from "../lib/phases";
 import type { Lang } from "./index";
 
 export interface Strings {
+  // 095-harness-loop-lens — the Harness ⇄ Loop lens (toggle + legend + loop readout).
+  lens: {
+    label: string; // aria/title for the lens control group
+    mode: { all: string; harness: string; loop: string };
+    legend: { harness: string; loop: string; learnMore: string };
+    // harness-role badge labels (keys mirror HarnessRole in lib/harness.ts).
+    role: {
+      tools: string;
+      knowledge: string;
+      memory: string;
+      context: string;
+      permissions: string;
+      model: string;
+      orchestration: string;
+      delivery: string;
+      observability: string;
+    };
+    // one-line glossary hint per role (canvas-jargon-tooltips convention: every
+    // canvas badge term gets a definition on hover). Same keys as `role`.
+    roleHint: {
+      tools: string;
+      knowledge: string;
+      memory: string;
+      context: string;
+      permissions: string;
+      model: string;
+      orchestration: string;
+      delivery: string;
+      observability: string;
+    };
+    // the role-legend header + the Agent-Harness disambiguation (nesting story).
+    roleLegendTitle: string;
+    // the Agent node is the runtime CORE of the wider harness ("Agent Harness"),
+    // relabelled so it doesn't read as just another orchestration box; the Context
+    // chip shows that the context window (context engineering) nests inside it.
+    core: string;
+    coreHint: string;
+    contextChip: string;
+    contextHint: string;
+    // the Loop-lens readout, projected from lib/loop.ts::deriveLoopView.
+    loop: {
+      iteration: (n: number, max: number) => string;
+      stopFinal: string;
+      stopMax: string;
+      recovery: string;
+      inProgress: string;
+    };
+  };
   app: {
     tagline: string;
     learn: string;
@@ -1109,6 +1157,51 @@ export interface Strings {
 }
 
 const en: Strings = {
+  lens: {
+    label: "Lens",
+    mode: { all: "All", harness: "Harness", loop: "Loop" },
+    legend: {
+      harness: "The wiring (space): every part around the model, colored by role. The Agent's own runtime is the “Agent Harness” at the core — here you see the whole harness it lives in.",
+      loop: "The cycle (time): reason → act → observe, iterating until a stop condition. It runs on the Agent Harness at the center.",
+      learnMore: "Learn Harness & Loop Engineering →",
+    },
+    role: {
+      tools: "Tools",
+      knowledge: "Knowledge",
+      memory: "Memory",
+      context: "Context",
+      permissions: "Permissions",
+      model: "Model",
+      orchestration: "Orchestration",
+      delivery: "Delivery",
+      observability: "Observability",
+    },
+    roleHint: {
+      tools: "Callable functions (via MCP) the agent invokes to act on the world.",
+      knowledge: "The corpus the agent can retrieve from (RAG / ingestion).",
+      memory: "Durable state that survives across turns (the relational DB, caches).",
+      context: "What gets assembled into the model's window — context engineering.",
+      permissions: "What is allowed in or blocked (edge security, guardrails).",
+      model: "The reasoning engine itself (the LLM).",
+      orchestration: "Routing, delegation and the control plane that runs the loop.",
+      delivery: "Getting bytes to and from the user (front door, ingress routing).",
+      observability: "Evals and telemetry that watch the harness.",
+    },
+    roleLegendTitle: "Parts of the harness",
+    core: "Core",
+    coreHint:
+      "The agent's own runtime — the “Agent Harness” (see the subtitle). It's the engine at the center of the wider harness, and it's what runs the Loop.",
+    contextChip: "Context window",
+    contextHint:
+      "What the agent assembles into the model's context window each turn — this is context engineering, nested inside the Agent Harness.",
+    loop: {
+      iteration: (n, max) => `${n} turns · cap ${max}`,
+      stopFinal: "✓ Answered — stopped on its own",
+      stopMax: "⚠ Hit the iteration cap",
+      recovery: "Failure injected — recovery path",
+      inProgress: "Loop in progress…",
+    },
+  },
   app: {
     tagline:
       "A chat message's journey through RAG, MCP tools and an LLM — visualized live.",
@@ -2334,6 +2427,51 @@ const en: Strings = {
 };
 
 const pt: Strings = {
+  lens: {
+    label: "Lente",
+    mode: { all: "Tudo", harness: "Harness", loop: "Loop" },
+    legend: {
+      harness: "O cabeamento (espaço): tudo em volta do modelo, colorido por papel. O runtime do próprio agente é o “Agent Harness” no centro — aqui você vê o harness inteiro que o cerca.",
+      loop: "O ciclo (tempo): raciocina → age → observa, iterando até uma condição de parada. Ele roda sobre o Agent Harness no centro.",
+      learnMore: "Aprenda Harness & Loop Engineering →",
+    },
+    role: {
+      tools: "Ferramentas",
+      knowledge: "Conhecimento",
+      memory: "Memória",
+      context: "Contexto",
+      permissions: "Permissões",
+      model: "Modelo",
+      orchestration: "Orquestração",
+      delivery: "Entrega",
+      observability: "Observabilidade",
+    },
+    roleHint: {
+      tools: "Funções chamáveis (via MCP) que o agente invoca para agir no mundo.",
+      knowledge: "O corpus de onde o agente recupera (RAG / ingestão).",
+      memory: "Estado durável que sobrevive entre turnos (o banco relacional, caches).",
+      context: "O que é montado na janela do modelo — context engineering.",
+      permissions: "O que é permitido entrar ou é bloqueado (segurança de borda, guardrails).",
+      model: "O motor de raciocínio em si (o LLM).",
+      orchestration: "Roteamento, delegação e o plano de controle que roda o loop.",
+      delivery: "Levar bytes de e para o usuário (porta da frente, roteamento de entrada).",
+      observability: "Avaliações e telemetria que observam o harness.",
+    },
+    roleLegendTitle: "Peças do harness",
+    core: "Núcleo",
+    coreHint:
+      "O runtime do próprio agente — o “Agent Harness” (veja o subtítulo). É o motor no centro do harness amplo, e é o que roda o Loop.",
+    contextChip: "Janela de contexto",
+    contextHint:
+      "O que o agente monta na janela de contexto do modelo a cada turno — isto é context engineering, aninhado dentro do Agent Harness.",
+    loop: {
+      iteration: (n, max) => `${n} rodadas · teto ${max}`,
+      stopFinal: "✓ Respondeu — parou sozinho",
+      stopMax: "⚠ Bateu no teto de iterações",
+      recovery: "Falha injetada — caminho de recuperação",
+      inProgress: "Loop em andamento…",
+    },
+  },
   app: {
     tagline:
       "A jornada de uma mensagem de chat por RAG, ferramentas MCP e um LLM — visualizada ao vivo.",

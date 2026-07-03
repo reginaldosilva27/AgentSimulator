@@ -180,6 +180,12 @@ export function heightOf(id: StationId, expanded: ReadonlySet<StationId>): numbe
   return expanded.has(id) ? EXPANDED_H[id] : (COLLAPSED_H_OVERRIDE[id] ?? COLLAPSED_H);
 }
 
+// 095-harness-loop-lens — under the Harness lens the collapsed Agent card carries
+// two extra harness badges (the "core" marker + the nested Context-window chip),
+// which wrap to a second row. Give it a little more height so the subtitle/readout
+// don't overlap. Only the Agent, only when collapsed + Harness lens.
+const AGENT_HARNESS_EXTRA_H = 28;
+
 export function computeLayout(
   expanded: ReadonlySet<StationId>,
   // 061-scenario-builder — the resolved à-la-carte selection (which stations are on +
@@ -188,6 +194,9 @@ export function computeLayout(
   // 035-conditional-upload-nodes — when false (default), the upload write-path
   // nodes (storage, ingestion) are excluded so the data column reflows shorter.
   showUpload = false,
+  // 095-harness-loop-lens — true only when the Harness lens is active, so the
+  // Agent card gets room for its extra harness badges (see AGENT_HARNESS_EXTRA_H).
+  harnessLens = false,
 ): LayoutResult {
   const positions = {} as Record<StationId, { x: number; y: number }>;
   const heights = {} as Record<StationId, number>;
@@ -203,7 +212,10 @@ export function computeLayout(
     let y = TOP;
     for (const id of col.members) {
       if (!visible.has(id)) continue; // not part of this rung — skip
-      const h = heightOf(id, expanded);
+      let h = heightOf(id, expanded);
+      // 095 — the collapsed Agent grows a touch under the Harness lens to fit its
+      // core + Context-window badges (expanded already has ample room).
+      if (harnessLens && id === "agent" && !expanded.has(id)) h += AGENT_HARNESS_EXTRA_H;
       positions[id] = { x: colX, y };
       heights[id] = h;
       y += h + col.gap;

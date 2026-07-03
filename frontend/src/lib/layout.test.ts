@@ -25,6 +25,27 @@ const SELECTIONS: { name: string; sel: ResolvedSelection }[] = [
   },
 ];
 
+describe("harness lens gives the collapsed Agent extra height (095)", () => {
+  it("agent is taller under the Harness lens, but only when collapsed", () => {
+    const base = computeLayout(new Set(), DEFAULT_SELECTION, false, false).heights.agent;
+    const harness = computeLayout(new Set(), DEFAULT_SELECTION, false, true).heights.agent;
+    expect(harness).toBeGreaterThan(base); // room for core + Context-window badges
+
+    // Expanded already has ample room, so the lens must not change it.
+    const expBase = computeLayout(new Set(["agent"]), DEFAULT_SELECTION, false, false).heights.agent;
+    const expHarness = computeLayout(new Set(["agent"]), DEFAULT_SELECTION, false, true).heights.agent;
+    expect(expHarness).toBe(expBase);
+  });
+
+  it("leaves other stations' heights untouched under the Harness lens", () => {
+    const base = computeLayout(new Set(), DEFAULT_SELECTION, false, false);
+    const harness = computeLayout(new Set(), DEFAULT_SELECTION, false, true);
+    for (const id of ["frontend", "backend", "rag", "llm", "mcp", "database"] as const) {
+      expect(harness.heights[id]).toBe(base.heights[id]);
+    }
+  });
+});
+
 describe("upload node hidden by default (035 + 080 AC6)", () => {
   for (const { name, sel } of SELECTIONS) {
     it(`omits ingestion from the layout in ${name} with no upload`, () => {
