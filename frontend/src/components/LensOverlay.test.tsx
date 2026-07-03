@@ -1,4 +1,4 @@
-// 095-harness-loop-lens — the canvas overlay: nothing under the `all` lens
+// 096-harness-loop-lens — the canvas overlay: nothing under the `all` lens
 // (AC1 baseline), the legend under Harness, the Loop readout under Loop (AC5),
 // and the "learn more" link jumps to Learn (AC8).
 

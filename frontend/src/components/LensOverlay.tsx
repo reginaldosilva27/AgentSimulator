@@ -4,7 +4,7 @@ import { deriveLoopView } from "../lib/loop";
 import { useLens } from "../lib/lens";
 import { useSimulator } from "../store/useSimulator";
 
-// 095-harness-loop-lens — the lens legend + Loop readout, floated over the canvas.
+// 096-harness-loop-lens — the lens legend + Loop readout, floated over the canvas.
 // Kept out of the header (space) so the explainer has room. Renders nothing under
 // the `all` lens (baseline untouched). Under `loop` it also surfaces the loop's
 // control readout (iteration count · stop reason · failure), a pure projection of

@@ -783,7 +783,7 @@ const SECTIONS_SRC: SectionSrc[] = [
       },
     ],
   },
-  // 096-learn-harness-loop — the conceptual spine: the prompt → context → harness →
+  // 097-learn-harness-loop — the conceptual spine: the prompt → context → harness →
   // loop ladder, and the two disciplines this simulator makes visible. Grounded in
   // the app's own stations (the harness) and its ReAct loop (the loop).
   {

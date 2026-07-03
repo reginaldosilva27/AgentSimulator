@@ -180,7 +180,7 @@ export function heightOf(id: StationId, expanded: ReadonlySet<StationId>): numbe
   return expanded.has(id) ? EXPANDED_H[id] : (COLLAPSED_H_OVERRIDE[id] ?? COLLAPSED_H);
 }
 
-// 095-harness-loop-lens — under the Harness lens the collapsed Agent card carries
+// 096-harness-loop-lens — under the Harness lens the collapsed Agent card carries
 // two extra harness badges (the "core" marker + the nested Context-window chip),
 // which wrap to a second row. Give it a little more height so the subtitle/readout
 // don't overlap. Only the Agent, only when collapsed + Harness lens.
@@ -194,7 +194,7 @@ export function computeLayout(
   // 035-conditional-upload-nodes — when false (default), the upload write-path
   // nodes (storage, ingestion) are excluded so the data column reflows shorter.
   showUpload = false,
-  // 095-harness-loop-lens — true only when the Harness lens is active, so the
+  // 096-harness-loop-lens — true only when the Harness lens is active, so the
   // Agent card gets room for its extra harness badges (see AGENT_HARNESS_EXTRA_H).
   harnessLens = false,
 ): LayoutResult {

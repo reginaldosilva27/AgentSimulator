@@ -1,7 +1,7 @@
 import { useT } from "../i18n";
 import { LENS_MODES, type LensMode, useLens } from "../lib/lens";
 
-// 095-harness-loop-lens — the Harness ⇄ Loop lens control. A tight segmented
+// 096-harness-loop-lens — the Harness ⇄ Loop lens control. A tight segmented
 // switch (All · 🗺️ Harness · 🔄 Loop) that reframes the canvas emphasis without
 // touching the run. Mirrors CloudToggle's styling. `all` is the default and
 // reproduces today's view byte-for-byte; the legend + loop readout render in the

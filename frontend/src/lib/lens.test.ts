@@ -1,4 +1,4 @@
-// 095-harness-loop-lens — AC1 (default `all`), AC2 (persistence), AC6 (switching
+// 096-harness-loop-lens — AC1 (default `all`), AC2 (persistence), AC6 (switching
 // the lens is a pure reframe: no fetch, no mutation of the simulator's events/cursor).
 
 import { afterEach, describe, expect, it, vi } from "vitest";

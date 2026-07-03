@@ -1,4 +1,4 @@
-// 095-harness-loop-lens — the Harness ⇄ Loop lens. A pure reframing of the same
+// 096-harness-loop-lens — the Harness ⇄ Loop lens. A pure reframing of the same
 // real run: `harness` lights up the wiring (space), `loop` lights up the cycle
 // (time), `all` is today's view untouched. Mirrors the cloud/lang stores: a tiny
 // Zustand store persisted to localStorage. Switching lens fires no request and

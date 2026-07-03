@@ -7,7 +7,7 @@ import type { TimelinePhase } from "../lib/phases";
 import type { Lang } from "./index";
 
 export interface Strings {
-  // 095-harness-loop-lens — the Harness ⇄ Loop lens (toggle + legend + loop readout).
+  // 096-harness-loop-lens — the Harness ⇄ Loop lens (toggle + legend + loop readout).
   lens: {
     label: string; // aria/title for the lens control group
     mode: { all: string; harness: string; loop: string };

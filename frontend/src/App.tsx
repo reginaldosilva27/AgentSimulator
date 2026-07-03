@@ -223,7 +223,7 @@ export default function App() {
         {detail === "rag" && <RagPipelinePanel />}
         {detail === "pageindex" && <PageIndexPipelinePanel />}
       </ReactFlowProvider>
-      {/* 095-harness-loop-lens — the lens legend + Loop readout, over the canvas. */}
+      {/* 096-harness-loop-lens — the lens legend + Loop readout, over the canvas. */}
       <LensOverlay onLearnMore={() => setPage("learn")} />
       {detail === "agent" && <AgentDetail view={view} onClose={closeDetail} />}
       {detail === "llm" && <LLMDetail onClose={closeDetail} />}
@@ -283,7 +283,7 @@ export default function App() {
         {/* 061-scenario-builder — the à-la-carte component palette (popover) replaces
             the maturity-ladder segmented control + the track switcher. */}
         <ScenarioBuilder />
-        {/* 095-harness-loop-lens — the Harness ⇄ Loop lens, next to Build. */}
+        {/* 096-harness-loop-lens — the Harness ⇄ Loop lens, next to Build. */}
         <LensToggle />
         <div className="hidden shrink-0 xl:flex">
           <CloudToggle />

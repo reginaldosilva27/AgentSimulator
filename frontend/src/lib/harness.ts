@@ -1,4 +1,4 @@
-// 095-harness-loop-lens — the harness axis. "Agent = Model + Harness": every
+// 096-harness-loop-lens — the harness axis. "Agent = Model + Harness": every
 // station in the visual model contributes some part of the scaffolding around the
 // model. This maps each station to exactly one harness role, from a fixed
 // vocabulary. Rendered as a role badge under the Harness lens.

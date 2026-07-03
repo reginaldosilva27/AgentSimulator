@@ -25,7 +25,7 @@ export interface StationNodeData {
   width?: number; // narrower for advanced-rung sub-agent nodes; defaults to NODE_WIDTH
   comingSoon: boolean; // 008 preview node — non-executing, rendered dashed/dimmed
   usage?: UsageTotals; // 011-token-cost — set on the LLM node only
-  // 095-harness-loop-lens — Harness lens: the station's harness-role facet (badge
+  // 096-harness-loop-lens — Harness lens: the station's harness-role facet (badge
   // label + glossary hint + role color; `core` marks the Agent as the runtime core
   // of the wider harness, with its Context-window chip). Undefined otherwise.
   // Loop lens: recede pure-harness stations (`dimmed`) so the cycle pops.
@@ -234,7 +234,7 @@ export function StationNode(props: NodeProps) {
           >
             {meta.tag}
           </span>
-          {/* 095-harness-loop-lens — the harness-role badge (Harness lens only),
+          {/* 096-harness-loop-lens — the harness-role badge (Harness lens only),
               filled with the role color + a glossary hint on hover. The Agent is
               relabelled as the runtime CORE, and carries a Context-window chip so
               the nesting (context engineering ⊂ Agent Harness) is visible. */}

@@ -1,4 +1,4 @@
-// 095-harness-loop-lens — AC7: every lens string ships in both en and pt (no
+// 096-harness-loop-lens — AC7: every lens string ships in both en and pt (no
 // language missing). Covers the mode labels, legend, role vocabulary and the
 // Loop-lens readout (including the iteration function).
 

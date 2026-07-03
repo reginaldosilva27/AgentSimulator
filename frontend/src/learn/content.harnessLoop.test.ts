@@ -1,4 +1,4 @@
-// 096-learn-harness-loop — the three discipline topics exist (AC1), are grounded in
+// 097-learn-harness-loop — the three discipline topics exist (AC1), are grounded in
 // this app's real harness (AC3) and real loop (AC4), the ladder is in order (AC5),
 // and each carries a curated link (AC6). Bilingual parity + link hygiene are already
 // enforced globally by content.test.ts, so these pin the 096-specific substance.

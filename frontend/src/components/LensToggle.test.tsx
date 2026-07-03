@@ -1,4 +1,4 @@
-// 095-harness-loop-lens — the lens toggle renders the three modes and drives the
+// 096-harness-loop-lens — the lens toggle renders the three modes and drives the
 // lens store (AC1 default `all`; clicking a mode selects it).
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";

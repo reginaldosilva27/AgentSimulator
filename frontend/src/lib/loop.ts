@@ -1,4 +1,4 @@
-// 095-harness-loop-lens — the loop axis. Where `harness.ts` classifies the wiring
+// 096-harness-loop-lens — the loop axis. Where `harness.ts` classifies the wiring
 // in space, this projects the agentic *cycle* in time from the trace: the ReAct
 // loop (reason → act → observe), how many iterations ran, why it stopped, and
 // whether a failure/recovery path was exercised. A pure projection over the event

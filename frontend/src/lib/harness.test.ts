@@ -1,4 +1,4 @@
-// 095-harness-loop-lens — AC3: the harness-role map is TOTAL over every StationId
+// 096-harness-loop-lens — AC3: the harness-role map is TOTAL over every StationId
 // (no station unclassified, no stale key), and every role has a badge label in both
 // languages (AC4/AC7 support: the Harness lens can label every station it shows).
 

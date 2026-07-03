@@ -1,4 +1,4 @@
-// 095-harness-loop-lens — AC5: deriveLoopView projects the loop's control elements
+// 096-harness-loop-lens — AC5: deriveLoopView projects the loop's control elements
 // from the trace — iteration count, stop reason (final-answer vs max-iterations),
 // whether a real think⇄tools cycle turned, and a simulated-failure/recovery flag.
 

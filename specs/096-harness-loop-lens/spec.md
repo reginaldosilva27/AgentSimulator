@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **ID** | 095-harness-loop-lens |
+| **ID** | 096-harness-loop-lens |
 | **Status** | draft → clarified → planned → in-progress → **done** |
 | **Author** | Reginaldo Silva |
 | **Date** | 2026-07-03 |
@@ -24,7 +24,7 @@ We want to position the AI Agent Simulator as a **gateway to learn Harness Engin
 Engineering**. To do that the app must let the learner **see one axis at a time**: a lens that
 lights up the harness (the map) or the loop (the journey) on demand, over the exact same real run.
 
-This spec covers the **in-canvas lens (Option A)**. The Learn-page theory is `096-learn-harness-loop`.
+This spec covers the **in-canvas lens (Option A)**. The Learn-page theory is `097-learn-harness-loop`.
 
 ## Goals
 

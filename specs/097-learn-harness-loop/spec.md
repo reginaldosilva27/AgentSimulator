@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **ID** | 096-learn-harness-loop |
+| **ID** | 097-learn-harness-loop |
 | **Status** | draft → clarified → planned → in-progress → **done** |
 | **Author** | Reginaldo Silva |
 | **Date** | 2026-07-03 |
@@ -11,7 +11,7 @@
 
 The AI Agent Simulator is being repositioned as a **gateway to learn Harness Engineering and Loop
 Engineering** — two disciplines that are where real agents are won or lost, yet are named nowhere in
-the app. The in-canvas lens (`095-harness-loop-lens`) lets a learner *see* the two axes; this spec
+the app. The in-canvas lens (`096-harness-loop-lens`) lets a learner *see* the two axes; this spec
 gives them the **theory** to go with the practice, on the **Learn** page.
 
 The field has converged on a canonical ladder — **prompt → context → harness → loop engineering** —
