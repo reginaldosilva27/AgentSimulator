@@ -86,6 +86,7 @@ theory in **[Learn mode](#-learn-mode)**. New to the terms? Start with
 - [🔌 OpenAI-only](#-openai-only)
 - [🧱 Tech stack](#-tech-stack)
 - [📁 Project layout](#-project-layout)
+- [🧩 Understand the codebase (knowledge graph)](#-understand-the-codebase-knowledge-graph)
 - [🧪 How it's built — SDD + TDD](#-how-its-built--sdd--tdd)
 - [🧑‍🤝‍🧑 How to collaborate on this project](#-how-to-collaborate-on-this-project)
 - [🤝 Contributing & license](#-contributing--license)
@@ -566,6 +567,63 @@ AgentSimulator/
 ├── .github/workflows/ci.yml      # lint (ruff) + tests (pytest) + frontend build
 └── LICENSE                       # MIT
 ```
+
+---
+
+## 🧩 Understand the codebase (knowledge graph)
+
+This repo ships a **pre-built [Understand-Anything](https://github.com/Egonex-AI/Understand-Anything)
+knowledge graph** — an interactive map of the architecture (558 nodes / 1091 edges, 10 layers, a
+14-step guided tour). **The analysis is already done and committed**, so your team can explore it
+**without re-scanning anything**.
+
+**What's committed** (under [`.understand-anything/`](.understand-anything/)):
+
+| File | What it is |
+|---|---|
+| `knowledge-graph.json` | The full graph — nodes, edges, layers, tour (this is what the dashboard reads) |
+| `meta.json` / `fingerprints.json` | Commit hash + per-file fingerprints, so future runs update **only changed files** |
+| `config.json` / `.understandignore` | Output language + the scope (this graph covers `backend/` + `frontend/` source) |
+
+There's also a static snapshot for quick reading: **[`docs/ONBOARDING.md`](docs/ONBOARDING.md)**.
+
+### ▶️ View the graph on your machine — no scan needed
+
+You already have everything the dashboard needs in the repo; you just install the plugin once and
+point its dashboard at the committed graph.
+
+1. **Install the plugin** (in Claude Code):
+   ```text
+   /plugin marketplace add Egonex-AI/Understand-Anything
+   /plugin install understand-anything
+   /reload-plugins
+   ```
+2. **One-time build** — the plugin's dashboard needs Node ≥ 22 + pnpm. If `pnpm` is missing:
+   ```bash
+   npm install -g pnpm@10        # corepack from an old nvm Node can fail on signature keys; this is the reliable path
+   ```
+   (The first `/understand-dashboard` run builds the plugin core automatically.)
+3. **Launch the dashboard** — it reads the committed `knowledge-graph.json`, it does **not** re-scan:
+   ```text
+   /understand-anything:understand-dashboard
+   ```
+   Open the printed `http://127.0.0.1:5173/?token=…` URL (keep the `?token=`).
+
+Prefer the terminal? These also read the existing graph without a scan:
+`/understand-anything:understand-chat` (ask questions), `/understand-anything:understand-explain <file>`
+(deep-dive one file), `/understand-anything:understand-onboard` (regenerate the onboarding guide).
+
+### 🔄 Keep it fresh (incremental — still no full re-scan)
+
+After you pull new commits, refresh the graph with an **incremental** run — thanks to the committed
+`fingerprints.json`, it only re-analyzes the files that changed since the last analysis:
+
+```text
+/understand-anything:understand
+```
+
+Use `/understand-anything:understand --full` only if you want to rebuild from scratch (e.g. after
+widening the scope in `.understand-anything/.understandignore`).
 
 ---
 

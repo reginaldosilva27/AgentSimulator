@@ -29,3 +29,12 @@ frontend/.vite/
 .idea/
 .vscode/
 *.swp
+
+# --- Understand-Anything knowledge graph ---
+# Commit the graph itself (knowledge-graph.json, meta.json, fingerprints.json,
+# config.json, .understandignore) so the team can view it without re-scanning.
+# Ignore only the run scratch (intermediate artifacts, dashboard log, trash).
+.understand-anything/intermediate/
+.understand-anything/tmp/
+.understand-anything/tmp-dashboard.log
+.understand-anything/.trash-*

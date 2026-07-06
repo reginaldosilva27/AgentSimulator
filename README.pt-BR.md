@@ -88,6 +88,7 @@ completa no **[Modo Learn](#-modo-learn)**. Novo nos termos? Comece por
 - [🔌 Somente OpenAI](#-somente-openai)
 - [🧱 Stack de tecnologia](#-stack-de-tecnologia)
 - [📁 Organização do projeto](#-organização-do-projeto)
+- [🧩 Entenda o código (grafo de conhecimento)](#-entenda-o-código-grafo-de-conhecimento)
 - [🧪 Como é construído — SDD + TDD](#-como-é-construído--sdd--tdd)
 - [🧑‍🤝‍🧑 Como colaborar com este projeto](#-como-colaborar-com-este-projeto)
 - [🤝 Contribuição & licença](#-contribuição--licença)
@@ -577,6 +578,63 @@ AgentSimulator/
 ├── .github/workflows/ci.yml      # lint (ruff) + testes (pytest) + build do frontend
 └── LICENSE                       # MIT
 ```
+
+---
+
+## 🧩 Entenda o código (grafo de conhecimento)
+
+Este repositório já vem com um **grafo de conhecimento do
+[Understand-Anything](https://github.com/Egonex-AI/Understand-Anything) pré-construído** — um mapa
+interativo da arquitetura (558 nós / 1091 arestas, 10 camadas, um tour guiado de 14 passos). **A
+análise já está feita e versionada**, então o time pode explorar **sem precisar re-escanear nada**.
+
+**O que está versionado** (em [`.understand-anything/`](.understand-anything/)):
+
+| Arquivo | O que é |
+|---|---|
+| `knowledge-graph.json` | O grafo completo — nós, arestas, camadas, tour (é o que o dashboard lê) |
+| `meta.json` / `fingerprints.json` | Hash do commit + fingerprints por arquivo, para futuras execuções atualizarem **só o que mudou** |
+| `config.json` / `.understandignore` | Idioma de saída + o escopo (este grafo cobre o código de `backend/` + `frontend/`) |
+
+Há também um retrato estático para leitura rápida: **[`docs/ONBOARDING.md`](docs/ONBOARDING.md)**.
+
+### ▶️ Ver o grafo na sua máquina — sem escanear
+
+Tudo o que o dashboard precisa já está no repositório; você só instala o plugin uma vez e aponta o
+dashboard dele para o grafo versionado.
+
+1. **Instale o plugin** (no Claude Code):
+   ```text
+   /plugin marketplace add Egonex-AI/Understand-Anything
+   /plugin install understand-anything
+   /reload-plugins
+   ```
+2. **Build único** — o dashboard do plugin precisa de Node ≥ 22 + pnpm. Se faltar `pnpm`:
+   ```bash
+   npm install -g pnpm@10        # o corepack de um Node antigo (nvm) pode falhar na verificação de chaves; este caminho é o confiável
+   ```
+   (A primeira execução do `/understand-dashboard` compila o core do plugin automaticamente.)
+3. **Abra o dashboard** — ele lê o `knowledge-graph.json` versionado, **não** re-escaneia:
+   ```text
+   /understand-anything:understand-dashboard
+   ```
+   Abra a URL `http://127.0.0.1:5173/?token=…` impressa (mantenha o `?token=`).
+
+Prefere o terminal? Estes também usam o grafo existente sem escanear:
+`/understand-anything:understand-chat` (faça perguntas), `/understand-anything:understand-explain <arquivo>`
+(mergulho em um arquivo), `/understand-anything:understand-onboard` (regera o guia de onboarding).
+
+### 🔄 Manter atualizado (incremental — ainda sem re-escanear tudo)
+
+Depois de dar `pull` em novos commits, atualize o grafo com uma execução **incremental** — graças ao
+`fingerprints.json` versionado, ela só re-analisa os arquivos que mudaram desde a última análise:
+
+```text
+/understand-anything:understand
+```
+
+Use `/understand-anything:understand --full` só quando quiser reconstruir do zero (ex.: depois de
+ampliar o escopo em `.understand-anything/.understandignore`).
 
 ---
 
