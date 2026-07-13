@@ -63,9 +63,22 @@ SCENARIOS: dict[str, dict] = {
     "hybrid-rerank": {"hybrid": True, "rerank": True},
     # 098-verify-reflection-loop — the opt-in critic/reflection loop (a per-run toggle,
     # not a Build component). Captured on the base (simple) selection so the demo can
-    # replay the `agent.verify` pass + the drill-in Verification panel when the toggle is
-    # on. `verify` composes with every scenario; only the base variant is captured here.
-    "verify": {"verify": True},
+    # replay the `agent.verify` pass/revise + the drill-in Verification panel when the
+    # toggle is on. To make the loop VISIBLE (a good model + a lenient critic rarely
+    # revises a full answer), we pair verify with a real, believable `agent_prompt` persona
+    # that produces a deliberately terse first draft — the critic then honestly asks for a
+    # revision, the loop re-generates, and the second draft passes. The trace is a genuine
+    # run (constitution §3 — never hand-authored); the concise persona is a legitimate 006
+    # request input. Explanatory questions (rag/mcp) loop; math/time answer completely in
+    # one line, so they pass on the first pass (an honest mix). `verify` composes with every
+    # scenario; only this base variant is captured.
+    "verify": {
+        "verify": True,
+        "agent_prompt": (
+            "Be extremely concise. Give a single short sentence with no elaboration, "
+            "examples, or detail."
+        ),
+    },
 }
 
 
