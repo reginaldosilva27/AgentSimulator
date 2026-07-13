@@ -61,6 +61,11 @@ SCENARIOS: dict[str, dict] = {
     # rerank path (the two combos the Build popover produces with hybrid on, ReAct runtime).
     "hybrid": {"hybrid": True},
     "hybrid-rerank": {"hybrid": True, "rerank": True},
+    # 098-verify-reflection-loop — the opt-in critic/reflection loop (a per-run toggle,
+    # not a Build component). Captured on the base (simple) selection so the demo can
+    # replay the `agent.verify` pass + the drill-in Verification panel when the toggle is
+    # on. `verify` composes with every scenario; only the base variant is captured here.
+    "verify": {"verify": True},
 }
 
 

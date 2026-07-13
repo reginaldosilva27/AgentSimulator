@@ -23,6 +23,7 @@ import type {
 import type { DoneEvent, TraceEvent, TraceSummary } from "../types/events";
 import type { ChunkPreviewResult } from "./chatApi";
 import { useLang } from "../i18n";
+import { DEFAULT_EXPERIMENT, DRAFT_KEY, useExperiment } from "./experiment";
 import { DEMO_CHUNK_PREVIEW, DEMO_CONFIG, DEMO_TRACES } from "../demo/fixtures";
 
 /** GitHub repo the demo banner points visitors at for the full live version. */
@@ -152,7 +153,7 @@ function retrievedChunks(events: TraceEvent[]): ChatChunk[] {
  *  repeated sends never collide, append the message to the in-memory thread, and
  *  index the cloned trace so `fetchTrace(message.id)` can revisit it. */
 function buildTurn(sessionId: string, message: string): TraceSummary {
-  const scenario = readScenario();
+  const scenario = readScenario(verifyOnFor(sessionId));
   const lang = useLang.getState().lang;
   const base = selectDemoTrace(qidForMessage(message), scenario, lang);
   const id = freshId("demo");
@@ -186,8 +187,16 @@ function buildTurn(sessionId: string, message: string): TraceSummary {
 // maturity a DERIVED label, so we read the global component selection (localStorage)
 // and classify it — keeping the demo's (qid × rung × lang) lookup working. Read lazily
 // from localStorage to avoid a hard import cycle at module load.
-function readScenario(): string {
-  if (typeof localStorage === "undefined") return "simple";
+// 098-verify-reflection-loop — the per-run verify toggle (useExperiment, in-memory,
+// not part of the Build selection). Read it for the active conversation so the demo can
+// replay the captured `verify` trace when the loop is on.
+function verifyOnFor(sessionId: string | null): boolean {
+  const e = useExperiment.getState();
+  return (e.byConv[sessionId ?? DRAFT_KEY] ?? DEFAULT_EXPERIMENT).verify;
+}
+
+function readScenario(verify = false): string {
+  if (typeof localStorage === "undefined") return verify ? "verify" : "simple";
   try {
     const raw = localStorage.getItem("agentsim.selection");
     if (raw) {
@@ -221,11 +230,14 @@ function readScenario(): string {
       // 070-hybrid-search — hybrid composes with rerank; each combo keys its own fixture.
       if (hybrid) return rerank ? "hybrid-rerank" : "hybrid";
       if (rerank) return "intermediate";
+      // 098-verify-reflection-loop — verify only has a base (simple-selection) capture,
+      // so it keys the `verify` fixture only when nothing else upgraded the run.
+      if (verify) return "verify";
     }
   } catch {
     // fall through to the default rung
   }
-  return "simple";
+  return verify ? "verify" : "simple";
 }
 
 // --- demo network surface (mirrors chatApi / sse / health) ------------------
