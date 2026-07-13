@@ -60,6 +60,18 @@ class AgentState(TypedDict):
     # Forced failure for this run (017-failure-injection), request-only:
     #   "none" (default, unchanged) | "tool_error" | "llm_timeout".
     simulate_failure: str
+    # Verify / reflection loop (098-verify-reflection-loop), request-only.
+    #   verify_enabled — when True, a critic pass (verify_node) judges the drafted
+    #                    answer and can loop back to generation, bounded by
+    #                    MAX_REVISIONS. False (default) reproduces today's behavior
+    #                    byte-for-byte (no agent.verify stage, no critic call).
+    #   revisions      — how many revision rounds have been triggered so far (the
+    #                    graph's hard bound reads this). Starts at 0.
+    #   verify_decision — the last verify verdict routed on ("revise" ⇒ loop back to
+    #                    generate; anything else ⇒ commit to respond). Set by verify_node.
+    verify_enabled: bool
+    revisions: int
+    verify_decision: str
     # Long-term memory: prior {message, answer} turns from the application DB.
     history: list[dict[str, str]]
     # Skill catalog (027-skills), request-derived: each {name, description} advertised

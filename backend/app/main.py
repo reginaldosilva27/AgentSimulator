@@ -293,6 +293,9 @@ async def config() -> dict:
         # 017-failure-injection: the allowed values for the "Simulate failure"
         # selector, so the frontend never hardcodes them (AC4).
         "failure_modes": [m.value for m in SimulateFailure],
+        # 098-verify-reflection-loop: the default state of the "Verification loop"
+        # toggle, so the experiment panel prefills without hardcoding it (AC8).
+        "verify_default": False,
         # 042-agent-anatomy: the curated OpenAI chat-model list the Agent
         # Anatomy dialog renders, plus the server's resolved default. The FE
         # never hardcodes model ids; the API validates ``ChatRequest.model``
@@ -884,6 +887,10 @@ async def chat(req: ChatRequest, request: Request):
     # is byte-for-byte unchanged (AC1).
     if req.ragless:
         request_body["ragless"] = True
+    # 098-verify-reflection-loop: echo the verify toggle only when on, so a default
+    # run's body stays minimal (mirrors the rerank/hybrid/ragless echoes).
+    if req.verify:
+        request_body["verify"] = True
     # 084-network-edge: echo the edge flag only when on, so a default run's body
     # stays minimal (mirrors the rerank/hybrid/ragless echoes).
     if req.edge:
@@ -997,6 +1004,8 @@ async def chat(req: ChatRequest, request: Request):
                     # 056-ragless-pageindex: run the reasoning-based PageIndex path
                     # alongside Vector RAG (Intermediate rung only; no-op otherwise).
                     ragless=req.ragless,
+                    # 098-verify-reflection-loop: opt-in critic pass after drafting.
+                    verify=req.verify,
                     # 049-agent-self-identity: server-resolved from the bound
                     # agent row above; never a request override.
                     agent_name=effective_agent_name,

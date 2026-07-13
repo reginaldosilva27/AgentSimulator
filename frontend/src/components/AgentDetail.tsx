@@ -26,6 +26,7 @@ import {
   hasDeepAgents,
   type DeepAgentsStep,
 } from "../lib/deepagents";
+import { deriveVerifyRounds, type VerifyRound } from "../lib/verifyRounds";
 import type { TodoItem } from "../types/events";
 import { useChat } from "../store/useChat";
 import { useSimulator } from "../store/useSimulator";
@@ -186,6 +187,9 @@ export function AgentDetail({ view, onClose }: AgentDetailProps) {
   // (plan / file write / file read / delegate), not just the final plan snapshot.
   const steps = useMemo(() => deriveDeepAgentsSteps(visible), [visible]);
   const vfs = useMemo(() => deriveVfs(visible), [visible]);
+  // 098-verify-reflection-loop: the critic passes of this turn (empty when the
+  // verify toggle was off), so the panel only shows when verification actually ran.
+  const verifyRounds = useMemo(() => deriveVerifyRounds(visible), [visible]);
 
   return (
     <div className="absolute inset-0 z-30 flex flex-col bg-[color-mix(in_srgb,var(--color-base)_94%,transparent)] backdrop-blur-sm">
@@ -314,6 +318,27 @@ export function AgentDetail({ view, onClose }: AgentDetailProps) {
               </Labeled>
             </Panel>
           )}
+
+          {/* 098-verify-reflection-loop: the verification (reflection) loop — each
+              critic pass with its verdict + reason + bounded revision count. Always
+              present in the drill-in (loop-engineering is a core concept): it lists the
+              passes when verification ran, else shows the bilingual empty state (AC9). */}
+          <Panel title={a.verify} accent="var(--color-pink)" hint={a.verifyHint}>
+            {verifyRounds.length === 0 ? (
+              <p className="text-[11px] italic text-[var(--color-label)]">{a.verifyEmpty}</p>
+            ) : (
+              <>
+                <p className="mb-2 text-[11px] text-[var(--color-muted)]">
+                  {a.verifyRounds(verifyRounds.filter((r) => r.willRevise).length)}
+                </p>
+                <ol className="space-y-1.5">
+                  {verifyRounds.map((r) => (
+                    <VerifyRow key={r.round} r={r} a={a} />
+                  ))}
+                </ol>
+              </>
+            )}
+          </Panel>
 
           {/* Senses + hands — what it perceives this turn, and the tools it used. */}
           <Panel title={a.senses} accent="var(--color-warn)" hint={a.workingMemoryHint}>
@@ -788,6 +813,34 @@ function TodoStatus({ status, label }: { status: TodoItem["status"]; label: stri
     <span title={label} className="font-mono text-[11px]" style={{ color: s.color }}>
       {s.icon}
     </span>
+  );
+}
+
+// 098-verify-reflection-loop — one critic pass: its verdict, reason, and (when it
+// looped back) a note that a revision round followed. Pure projection of an
+// `agent.verify` event; green for pass, amber for revise.
+function VerifyRow({ r, a }: { r: VerifyRound; a: ReturnType<typeof useT>["agentDetail"] }) {
+  const revise = r.decision === "revise";
+  const color = revise ? "var(--color-warn)" : "var(--color-ok)";
+  return (
+    <li className="rounded-md border border-[var(--color-line)] bg-[var(--color-panel-2)] px-2 py-1.5">
+      <div className="flex items-center gap-1.5 text-[11px]">
+        <span style={{ color }}>{revise ? "↻" : "✓"}</span>
+        <span className="font-mono text-[var(--color-muted)]">#{r.round}</span>
+        <span className="font-medium" style={{ color }}>
+          {revise ? a.verifyRevise : a.verifyPass}
+        </span>
+      </div>
+      {r.reason && (
+        <div className="mt-1 text-[11px] text-[var(--color-ink)]">
+          <span className="text-[var(--color-label)]">{a.verifyReason}: </span>
+          {r.reason}
+        </div>
+      )}
+      {r.willRevise && (
+        <div className="mt-0.5 text-[10px] italic text-[var(--color-muted)]">{a.verifyRevised}</div>
+      )}
+    </li>
   );
 }
 

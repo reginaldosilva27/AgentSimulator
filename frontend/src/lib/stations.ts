@@ -599,6 +599,9 @@ const STATIONS_SRC: StationSrc[] = [
       "agent.fs.read",
       "agent.delegate",
       "agent.think",
+      // 098-verify-reflection-loop: the critic pass rides the same `agent` station
+      // (a sub-stage like agent.think — no new node), fired only when `verify` is on.
+      "agent.verify",
     ],
     position: { x: 340, y: 430 },
   },

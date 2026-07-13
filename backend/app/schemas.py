@@ -105,6 +105,14 @@ class Stage(StrEnum):
     MCP_CALL = "mcp.call"
     LLM_PROMPT = "llm.prompt"
     LLM_GENERATE = "llm.generate"
+    # Verify / reflection loop (098-verify-reflection-loop): an opt-in second-order
+    # "loopcraft" pass. After the answer is drafted (llm.generate) a critic judgement
+    # scores it (pass / revise + reason); on `revise` the loop returns to generate with
+    # the critique folded into the thread, bounded by MAX_REVISIONS. Fires once per
+    # generate round, only when the request's `verify` toggle is on (default off ⇒ this
+    # stage never fires, byte-for-byte). Runtime-agnostic (ReAct and DeepAgents). Maps to
+    # the `agent` station (a sub-stage like agent.think — no tile of its own).
+    AGENT_VERIFY = "agent.verify"
     RESPOND = "respond"
     DB_WRITE = "db.write"
 
@@ -284,6 +292,15 @@ class ChatRequest(BaseModel):
     # Forces a chosen failure on this run so the learner can watch the agent
     # degrade. Request-only, bounded enum; ``none`` (default) is unchanged.
     simulate_failure: SimulateFailure = SimulateFailure.NONE
+
+    # --- Verify / reflection loop (098-verify-reflection-loop) ---------------
+    # Opt-in "loopcraft": after drafting the answer, a critic pass judges it
+    # (grounded? complete? answers the question?) and can send it back for one or
+    # more **bounded** revisions before the answer is committed. Request-only;
+    # ``False`` (default) reproduces today's behavior byte-for-byte — no
+    # ``agent.verify`` stage, no extra model call. Runtime-agnostic (runs under
+    # both the ReAct and DeepAgents runtimes when on).
+    verify: bool = False
 
     # --- Message attachments (040-message-attachments) -----------------------
     # Documents the composer was holding when the user pressed Send — the

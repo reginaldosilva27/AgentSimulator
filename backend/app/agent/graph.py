@@ -28,7 +28,7 @@ from functools import lru_cache
 from time import perf_counter
 from typing import Any, cast
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
@@ -44,11 +44,14 @@ from ..trace import StageRecord, TraceEmitter
 from .deepagents import run_deepagents_tool
 from .prompts import (
     AGENT_PROMPT,
+    CRITIC_PROMPT,
     GUARDRAILS_PROMPT,
     compose_system,
+    critic_user_message,
     deepagents_block,
     deepagents_state_block,
     identity_block,
+    revision_instruction,
     skills_block,
 )
 from .resilience import (
@@ -66,6 +69,11 @@ MAX_ITERATIONS = 3
 # delegate → answer), so the Intermediate rung gets more reasoning-round headroom than the
 # Simple ReAct loop. Bounded all the same (and by ``recursion_limit``).
 DEEPAGENTS_MAX_ITERATIONS = 8
+# 098-verify-reflection-loop: the hard bound on the verify ⇄ generate revision loop. A
+# `revise` verdict re-enters generation at most this many times; after that the answer is
+# committed regardless (the critic could keep asking forever). Independent of MAX_ITERATIONS
+# (the tool loop). Small on purpose: it bounds worst-case extra cost to ~N generate+critic rounds.
+MAX_REVISIONS = 2
 
 
 def _max_iterations(state: AgentState) -> int:
@@ -599,12 +607,84 @@ async def generate_node(state: AgentState, config: RunnableConfig) -> dict[str, 
     return {"answer": answer, "messages": [AIMessage(content=answer)], **plan_update}
 
 
+async def verify_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+    """098-verify-reflection-loop: judge the drafted answer, loop back on `revise`.
+
+    A genuine critic model call (``provider.critique`` → a tool-less ``decide`` over the
+    :data:`CRITIC_PROMPT`) scores the answer that ``generate_node`` just produced. On a
+    ``revise`` verdict **within the bound** (``revisions < MAX_REVISIONS``) the critique is
+    folded into the canonical thread as a user turn and the loop returns to ``generate`` (via
+    ``_should_revise``); otherwise the answer is committed and the run proceeds to ``respond``.
+
+    Runtime-agnostic: it keys only off ``verify_enabled`` (wired by ``_after_generate``), so it
+    runs identically under the ReAct and DeepAgents runtimes. The critic's token usage is folded
+    into the ``agent.verify`` metrics so the reflection cost stays visible (011).
+    """
+    emitter, provider, _registry = _deps(config)
+    revisions = state["revisions"]
+
+    async with emitter.stage(Stage.AGENT_VERIFY, "Verifying the answer") as rec:
+        thread: list[AnyMessage] = [
+            HumanMessage(
+                content=critic_user_message(state["message"], state["answer"], state["context"])
+            )
+        ]
+        verdict = await provider.critique(
+            system=CRITIC_PROMPT, thread=thread, history=state["history"]
+        )
+        # Loop back only on a `revise` verdict that is still within the hard bound.
+        will_revise = verdict.decision == "revise" and revisions < MAX_REVISIONS
+        rec.data = {
+            "decision": verdict.decision,
+            "reason": verdict.reason,
+            # Which draft this verdict judged (0 = the first draft), and the bound, so the
+            # drill-in can show "revision 1 of 2". `will_revise` records whether the loop
+            # actually re-entered generation (a capped `revise` commits instead).
+            "revision": revisions,
+            "max_revisions": MAX_REVISIONS,
+            "will_revise": will_revise,
+            "answer": state["answer"],
+        }
+        if verdict.usage:
+            rec.metrics.update(usage_metrics(provider.model_name, verdict.usage))
+
+    if will_revise:
+        # Fold the critique into the thread so the next generate round honestly sees it,
+        # and record the routing decision + bumped counter for the conditional edge.
+        return {
+            "verify_decision": "revise",
+            "revisions": revisions + 1,
+            "messages": [HumanMessage(content=revision_instruction(verdict.reason))],
+        }
+    return {"verify_decision": "pass"}
+
+
 async def respond_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     emitter, _provider, _registry = _deps(config)
     emitter.answer = state["answer"]
     async with emitter.stage(Stage.RESPOND, "Returning the answer to the user") as rec:
         rec.data = {"answer": state["answer"]}
     return {}
+
+
+def _after_generate(state: Mapping[str, Any]) -> str:
+    """098-verify-reflection-loop: route the freshly-drafted answer.
+
+    With the ``verify`` toggle on, the answer goes through the critic (``verify``) before
+    it is committed; off, it goes straight to ``respond`` exactly as before — so the
+    default run's stage stream is byte-for-byte unchanged (AC1).
+    """
+    return "verify" if state.get("verify_enabled") else "respond"
+
+
+def _should_revise(state: Mapping[str, Any]) -> str:
+    """098-verify-reflection-loop: loop back to generation, or commit the answer.
+
+    ``verify_node`` sets ``verify_decision`` to ``"revise"`` only when it actually decided
+    to loop (a ``revise`` verdict still within :data:`MAX_REVISIONS`); the bound is enforced
+    there, so this edge is a simple read.
+    """
+    return "generate" if state.get("verify_decision") == "revise" else "respond"
 
 
 def _should_continue(state: AgentState) -> str:
@@ -629,6 +709,7 @@ def get_compiled_graph():
     builder.add_node("think", think_node)
     builder.add_node("tools", tools_node)
     builder.add_node("generate", generate_node)
+    builder.add_node("verify", verify_node)
     builder.add_node("respond", respond_node)
 
     builder.add_edge(START, "route")
@@ -644,7 +725,15 @@ def get_compiled_graph():
         {"tools": "tools", "generate": "generate", "respond": "respond"},
     )
     builder.add_edge("tools", "think")
-    builder.add_edge("generate", "respond")
+    # 098-verify-reflection-loop: with `verify` on the draft goes through the critic first
+    # (generate → verify), which either loops back (verify → generate) or commits
+    # (verify → respond). Off, generate → respond directly (byte-for-byte baseline).
+    builder.add_conditional_edges(
+        "generate", _after_generate, {"verify": "verify", "respond": "respond"}
+    )
+    builder.add_conditional_edges(
+        "verify", _should_revise, {"generate": "generate", "respond": "respond"}
+    )
     builder.add_edge("respond", END)
     return builder.compile()
 
@@ -671,6 +760,7 @@ async def run_agent_state(
     rerank_threshold: float = 0.0,
     ragless: bool = False,
     hybrid: bool = False,
+    verify: bool = False,
 ) -> AgentState:
     """Run the agent for one message and return the final graph state.
 
@@ -698,6 +788,9 @@ async def run_agent_state(
         "ragless": ragless,
         "hybrid": hybrid,
         "simulate_failure": simulate_failure,
+        "verify_enabled": verify,
+        "revisions": 0,
+        "verify_decision": "",
         "history": history or [],
         "skills_catalog": skills_catalog or [],
         "messages": [HumanMessage(content=message)],
@@ -740,6 +833,7 @@ async def run_agent(
     rerank_threshold: float = 0.0,
     ragless: bool = False,
     hybrid: bool = False,
+    verify: bool = False,
 ) -> str:
     """Run the full agent for one message, emitting trace events as it goes.
 
@@ -785,5 +879,6 @@ async def run_agent(
         rerank_threshold=rerank_threshold,
         ragless=ragless,
         hybrid=hybrid,
+        verify=verify,
     )
     return final_state["answer"]

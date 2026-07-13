@@ -221,3 +221,53 @@ def compose_system(
     block = skills_block(catalog)
     composed = f"{base}\n\n{block}" if block else base
     return f"{identity}\n\n{composed}" if identity else composed
+
+
+# 098-verify-reflection-loop: the critic (verification) prompt + message builders.
+# The verify node runs a genuine model judgement of the drafted answer and re-enters
+# generation on a "revise" verdict, bounded by the graph's MAX_REVISIONS. The critic
+# is deliberately strict-but-fair and MUST answer in a parseable one-line verdict so
+# `provider.parse_verdict` can route the loop.
+CRITIC_PROMPT = """You are a strict but fair reviewer of another assistant's draft answer. \
+Judge ONLY whether the draft is good enough to send to the user, considering:
+- Does it actually answer the question that was asked?
+- Is it grounded in the provided context / tool results (not invented), when context exists?
+- Is it complete, clear, and free of obvious errors or contradictions?
+
+Do NOT rewrite the answer yourself. Reply with a single line, in EXACTLY one of these forms:
+- `PASS` — the draft is good enough to send as-is.
+- `REVISE: <one short sentence saying what must change>` — the draft needs another pass.
+
+Be decisive: only ask for a revision when it would materially improve the answer."""
+
+
+def critic_user_message(question: str, answer: str, grounding: str) -> str:
+    """The critic's user turn: the question, the drafted answer, and the grounding it used.
+
+    ``grounding`` is the retrieved-context readout (state["context"]); it may be empty
+    when the turn used no retrieval — the critic then judges on question + answer alone.
+    """
+    parts = [
+        "Review this draft answer.",
+        f"\n## Question\n{question}",
+    ]
+    if grounding and grounding.strip():
+        parts.append(f"\n## Context the assistant had\n{grounding.strip()}")
+    parts.append(f"\n## Draft answer\n{answer}")
+    parts.append("\nReply with `PASS` or `REVISE: <reason>`.")
+    return "\n".join(parts)
+
+
+def revision_instruction(reason: str) -> str:
+    """The message folded back into the thread on a `revise` verdict.
+
+    Appended as a user turn so the next `generate` round honestly sees the critique and
+    revises its previous answer in response to it (spec 098 AC5).
+    """
+    reason = (reason or "").strip() or "Improve the answer's accuracy, grounding and completeness."
+    return (
+        "A reviewer checked your previous answer and asked for a revision:\n"
+        f"> {reason}\n\n"
+        "Revise your answer to address this feedback. Reply with only the improved "
+        "answer, grounded in the context and tool results already in this conversation."
+    )

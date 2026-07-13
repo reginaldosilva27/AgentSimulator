@@ -85,6 +85,9 @@ export const STAGE_TO_PHASE: Record<Stage, TimelinePhase> = {
   "mcp.discover": "tools",
   "mcp.call": "tools",
   "llm.generate": "generate",
+  // 098-verify-reflection-loop — the critic pass judges the drafted answer and can
+  // loop back to generation, so it belongs to the same generate phase.
+  "agent.verify": "generate",
   respond: "respond",
   "db.write": "persist",
 };

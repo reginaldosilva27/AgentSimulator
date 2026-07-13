@@ -32,7 +32,7 @@ export function SettingsExperiment() {
 
   const topK = exp.topK ?? config?.default_top_k ?? 4;
   const rerankThreshold = exp.rerankThreshold ?? config?.default_rerank_threshold ?? 0;
-  const dirty = exp.topK !== null || (exp.rerankThreshold ?? 0) > 0;
+  const dirty = exp.topK !== null || (exp.rerankThreshold ?? 0) > 0 || exp.verify;
 
   return (
     <section>
@@ -102,6 +102,23 @@ export function SettingsExperiment() {
         onChange={(e) => exp_.setRerankThreshold(conv, Number(e.target.value))}
         className="w-full accent-[var(--color-accent)]"
       />
+
+      {/* 098-verify-reflection-loop — the verification (reflection) loop toggle, a
+          per-run knob (loop engineering). Off by default ⇒ today's run byte-for-byte. */}
+      <label className="mt-3 flex cursor-pointer items-start gap-2">
+        <input
+          type="checkbox"
+          checked={exp.verify}
+          onChange={(e) => exp_.setVerify(conv, e.target.checked)}
+          className="mt-0.5 accent-[var(--color-accent)]"
+        />
+        <span>
+          <span className="text-[11px] font-semibold text-[var(--color-ink)]">{ex.verify}</span>
+          <span className="mt-0.5 block text-[10.5px] leading-snug text-[var(--color-muted)]">
+            {ex.verifyHint}
+          </span>
+        </span>
+      </label>
 
       {/* 061-scenario-builder — RAGLESS moved to the header "Build" palette (it's an
           architecture component now, not a per-run knob). */}

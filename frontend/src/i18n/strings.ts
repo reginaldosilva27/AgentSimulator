@@ -414,6 +414,9 @@ export interface Strings {
       topKHint: string;
       rerankThreshold: string;
       rerankThresholdHint: string;
+      // 098-verify-reflection-loop — the verification-loop toggle + its help.
+      verify: string;
+      verifyHint: string;
       // 056-ragless-pageindex — the RAGLESS (PageIndex) toggle + its help, and the
       // note shown when it's unavailable (Simple rung).
       ragless: {
@@ -736,6 +739,16 @@ export interface Strings {
     vfsEmpty: string;
     wrote: string;
     read: string;
+    // 098-verify-reflection-loop — the verification (reflection) loop panel: each
+    // critic pass, its verdict + reason, and the bounded revision count.
+    verify: string;
+    verifyHint: string;
+    verifyEmpty: string;
+    verifyPass: string;
+    verifyRevise: string;
+    verifyReason: string;
+    verifyRevised: string; // note that a revision round followed this verdict
+    verifyRounds: (n: number) => string; // "{n} revision round(s)"
   };
   // 068-llm-rounds-history — the LLM drill-in ("open full view" on the LLM node):
   // every model call of the turn, each with its full prompt, latency and tokens.
@@ -1538,6 +1551,9 @@ const en: Strings = {
       rerankThreshold: "Rerank score threshold",
       rerankThresholdHint:
         "Intermediate only: drop chunks the reranker scored below this — fewer but cleaner grounding (0 = off).",
+      verify: "Verification loop",
+      verifyHint:
+        "After drafting, a critic pass checks the answer and can send it back for a bounded revision before it is committed (loop engineering).",
       ragless: {
         label: "RAGLESS (PageIndex)",
         hint: "Run reasoning-based retrieval alongside Vector RAG to compare. The LLM navigates a document tree instead of vector search — PageIndex grounds the answer.",
@@ -1969,6 +1985,14 @@ const en: Strings = {
     vfsEmpty: "No files written this run.",
     wrote: "wrote",
     read: "read",
+    verify: "Verification",
+    verifyHint: "With the verification loop on, a critic pass judges the drafted answer and can send it back for a bounded revision before it is committed.",
+    verifyEmpty: "Verification was off for this run.",
+    verifyPass: "passed",
+    verifyRevise: "needs revision",
+    verifyReason: "Reason",
+    verifyRevised: "→ revised and re-generated",
+    verifyRounds: (n) => `${n} revision round${n === 1 ? "" : "s"}`,
   },
   citation: {
     sources: "sources",
@@ -2810,6 +2834,9 @@ const pt: Strings = {
       rerankThreshold: "Limiar de score do rerank",
       rerankThresholdHint:
         "Só no Intermediário: descarta chunks com score abaixo disso — fundamentação menor, porém mais limpa (0 = desligado).",
+      verify: "Loop de verificação",
+      verifyHint:
+        "Após rascunhar, uma etapa crítica revisa a resposta e pode devolvê-la para uma revisão limitada antes de confirmá-la (engenharia de loop).",
       ragless: {
         label: "RAGLESS (PageIndex)",
         hint: "Roda recuperação por raciocínio junto do RAG vetorial para comparar. A LLM navega uma árvore do documento em vez de busca vetorial — o PageIndex fundamenta a resposta.",
@@ -3244,6 +3271,14 @@ const pt: Strings = {
     vfsEmpty: "Nenhum arquivo escrito nesta execução.",
     wrote: "escreveu",
     read: "leu",
+    verify: "Verificação",
+    verifyHint: "Com o loop de verificação ligado, uma etapa crítica avalia a resposta rascunhada e pode devolvê-la para uma revisão limitada antes de confirmá-la.",
+    verifyEmpty: "A verificação estava desligada nesta execução.",
+    verifyPass: "aprovada",
+    verifyRevise: "precisa de revisão",
+    verifyReason: "Motivo",
+    verifyRevised: "→ revisada e gerada de novo",
+    verifyRounds: (n) => `${n} rodada${n === 1 ? "" : "s"} de revisão`,
   },
   citation: {
     sources: "fontes",

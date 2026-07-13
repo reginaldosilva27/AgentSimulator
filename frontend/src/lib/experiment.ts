@@ -27,6 +27,9 @@ export interface ConvExperiment {
   // 056-ragless-pageindex — run the reasoning-based PageIndex path alongside Vector
   // RAG (Intermediate rung only). false = today's behavior, byte-for-byte.
   ragless: boolean;
+  // 098-verify-reflection-loop — run a critic pass after drafting that can loop back
+  // for a bounded revision. false = today's behavior, byte-for-byte (no agent.verify).
+  verify: boolean;
 }
 
 export const DEFAULT_EXPERIMENT: ConvExperiment = {
@@ -34,6 +37,7 @@ export const DEFAULT_EXPERIMENT: ConvExperiment = {
   simulateFailure: "none",
   rerankThreshold: null,
   ragless: false,
+  verify: false,
 };
 
 // Draft conversations (not yet persisted) park their settings here until
@@ -51,6 +55,7 @@ interface ExperimentState {
   setSimulateFailure: (conv: string | null, value: string) => void;
   setRerankThreshold: (conv: string | null, value: number | null) => void;
   setRagless: (conv: string | null, value: boolean) => void;
+  setVerify: (conv: string | null, value: boolean) => void;
   reset: (conv: string | null) => void;
   adopt: (from: string | null, to: string) => void;
 }
@@ -86,6 +91,13 @@ export const useExperiment = create<ExperimentState>((set, get) => ({
       const key = keyOf(conv);
       const cur = s.byConv[key] ?? DEFAULT_EXPERIMENT;
       return { byConv: { ...s.byConv, [key]: { ...cur, ragless: value } } };
+    }),
+
+  setVerify: (conv, value) =>
+    set((s) => {
+      const key = keyOf(conv);
+      const cur = s.byConv[key] ?? DEFAULT_EXPERIMENT;
+      return { byConv: { ...s.byConv, [key]: { ...cur, verify: value } } };
     }),
 
   reset: (conv) =>
@@ -129,6 +141,9 @@ export interface ChatOverrides {
   hybrid?: boolean;
   runtime?: string;
   ragless?: boolean;
+  // 098-verify-reflection-loop — opt-in critic pass; sent only when on so an
+  // untouched run sends nothing extra (byte-for-byte baseline).
+  verify?: boolean;
   // 088-network-layer — visualize + emit the real ingress chain. Sent only when the
   // `network` component is enabled (which the Build popover allows only when the chain
   // is present), so an ordinary run sends nothing extra.
@@ -141,6 +156,7 @@ export function overridesFor(conv: string | null): ChatOverrides {
   if (e.topK !== null) out.top_k = e.topK;
   if (e.simulateFailure && e.simulateFailure !== "none") out.simulate_failure = e.simulateFailure;
   if (e.rerankThreshold && e.rerankThreshold > 0) out.rerank_threshold = e.rerankThreshold;
+  if (e.verify) out.verify = true;
   const { rerank, hybrid, runtime, ragless } = currentRequestInputs();
   if (rerank) out.rerank = true;
   if (hybrid) out.hybrid = true;

@@ -61,6 +61,11 @@ export type Stage =
   | "mcp.call"
   | "llm.prompt"
   | "llm.generate"
+  // Verify / reflection loop (098-verify-reflection-loop): a critic judgement of the
+  // drafted answer (pass / revise + reason). Fires once per generate round, only when
+  // the request's `verify` toggle is on. Maps to the `agent` station. On the END event
+  // `data` carries { decision: "pass" | "revise", reason, revision, max_revisions }.
+  | "agent.verify"
   | "respond"
   | "db.write";
 

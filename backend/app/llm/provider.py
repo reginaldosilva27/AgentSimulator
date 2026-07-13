@@ -62,6 +62,21 @@ class TokenUsage:
 
 
 @dataclass
+class Verdict:
+    """A critic's judgement of a drafted answer (098-verify-reflection-loop).
+
+    ``decision`` is ``"pass"`` (the answer is good enough to commit) or ``"revise"``
+    (send it back to generation). ``reason`` is a short, user-facing rationale shown
+    in the verify drill-in. ``usage`` is the real token usage of the critic call (011),
+    folded into the ``agent.verify`` metrics so the reflection cost stays visible.
+    """
+
+    decision: str
+    reason: str
+    usage: TokenUsage | None = None
+
+
+@dataclass
 class Decision:
     """The model's choice: call tools, or (when empty) produce the answer."""
 
@@ -120,6 +135,51 @@ class LLMProvider(ABC):
         context / tool results), so the answer is grounded without stuffing
         results into the system prompt.
         """
+
+    async def critique(
+        self,
+        *,
+        system: str,
+        thread: list[AnyMessage],
+        history: list[dict[str, str]] | None = None,
+    ) -> Verdict:
+        """Judge a drafted answer and return a structured :class:`Verdict`.
+
+        098-verify-reflection-loop: a **concrete** default that reuses :meth:`decide`
+        (which every provider already implements) with **no tools** — the critic is a
+        plain model call over a critic ``system`` prompt + a ``thread`` describing the
+        question, the drafted answer and the grounding. It parses the model's reply into
+        a ``pass``/``revise`` verdict. Providers may override for a structured-output
+        path, but the shared implementation keeps every backend (OpenAI / Ollama /
+        Vertex AI) working with no per-provider change and stays genuinely real.
+
+        Fail-safe: an ambiguous reply is treated as ``pass`` so a real run never loops
+        needlessly (the bound in the graph is the hard stop regardless).
+        """
+        decision = await self.decide(system=system, thread=thread, tools=[], history=history)
+        content = decision.message.content
+        text = content if isinstance(content, str) else str(content or "")
+        return parse_verdict(text, usage=decision.usage)
+
+
+def parse_verdict(text: str, *, usage: TokenUsage | None = None) -> Verdict:
+    """Parse a critic reply into a :class:`Verdict` (098-verify-reflection-loop).
+
+    The critic is instructed to answer ``PASS`` or ``REVISE: <reason>``. We read the
+    leading token case-insensitively: a reply that starts with ``REVISE`` is a revision
+    request (the rest, stripped of separators, is the reason); anything else — including
+    an empty or malformed reply — is a **pass** (fail-safe, so an ambiguous critic never
+    forces a needless revision). The hard loop bound lives in the graph regardless.
+    """
+    stripped = (text or "").strip()
+    if stripped.upper().startswith("REVISE"):
+        reason = stripped[len("REVISE") :].lstrip(" :.-—\t").strip()
+        return Verdict("revise", reason or "The critic requested a revision.", usage)
+    # Strip a leading "PASS" marker from the reason when present, else use the whole reply.
+    reason = stripped
+    if stripped.upper().startswith("PASS"):
+        reason = stripped[len("PASS") :].lstrip(" :.-—\t").strip()
+    return Verdict("pass", reason or "The answer passed verification.", usage)
 
 
 def get_provider(
