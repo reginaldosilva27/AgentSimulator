@@ -12,7 +12,7 @@ import { useMemo } from "react";
 import { useLang, useT } from "../i18n";
 import type { Strings } from "../i18n/strings";
 import { cloudValue, useCloud } from "../lib/cloud";
-import { formatTokens, formatUsd } from "../lib/cost";
+import { formatPct, formatTokens, formatUsd } from "../lib/cost";
 import type { DerivedView, StationRuntime, UsageTotals } from "../lib/derive";
 import { hasUploadActivity } from "../lib/derive";
 import { HARNESS_ROLE, HARNESS_ROLE_COLOR } from "../lib/harness";
@@ -439,8 +439,17 @@ export function readoutFor(
       const tokens = rt.events.filter((e) => e.stage === "llm.generate" && e.phase === "progress").length;
       if (rt.status === "active" && tokens) return ro.streaming(tokens);
       // Real tokens + cost once a round has reported usage (011-token-cost).
-      if (usage.totalTokens > 0)
-        return ro.tokensCost(formatTokens(usage.totalTokens), formatUsd(usage.costUsd));
+      if (usage.totalTokens > 0) {
+        const base = ro.tokensCost(formatTokens(usage.totalTokens), formatUsd(usage.costUsd));
+        // 099-prompt-caching — append the cache saving when the prompt's stable
+        // prefix was served from cache (% of what the call would otherwise cost).
+        if (usage.cachedTokens > 0) {
+          const wouldBe = usage.costUsd + usage.costSavedUsd;
+          const pct = wouldBe > 0 ? usage.costSavedUsd / wouldBe : 0;
+          return `${base} · ${ro.cachedSaving(formatTokens(usage.cachedTokens), formatPct(pct))}`;
+        }
+        return base;
+      }
       if (tokens) return ro.tokens(tokens);
       if (lastWith(rt.events, (e) => e.stage === "llm.prompt")) return ro.promptAssembled;
       return "…";

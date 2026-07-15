@@ -134,9 +134,45 @@ describe("tallyUsage (018 AC1b — parity + counting rules)", () => {
       completionTokens: 0,
       totalTokens: 0,
       costUsd: 0,
+      cachedTokens: 0,
+      costSavedUsd: 0,
       toolCalls: 0,
       ragHits: 0,
     });
+  });
+
+  // 099-prompt-caching (AC4) — cached tokens + the money they saved sum across
+  // every LLM call of the turn, from the additive `cached_tokens`/`cost_saved_usd`
+  // metrics the backend now emits on `agent.think` / `llm.generate` ENDs.
+  it("sums cachedTokens and costSavedUsd across the turn's LLM calls", () => {
+    seq = 0;
+    const events: TraceEvent[] = [
+      ev("agent.think", "end", { decision: "answer", tool_calls: [] }, {
+        prompt_tokens: 1200,
+        completion_tokens: 10,
+        total_tokens: 1210,
+        cost_usd: 0.0005,
+        cached_tokens: 0,
+        cost_saved_usd: 0,
+      }),
+      ev("llm.generate", "end", { answer: "hi" }, {
+        prompt_tokens: 1300,
+        completion_tokens: 30,
+        total_tokens: 1330,
+        cost_usd: 0.0004,
+        cached_tokens: 1024,
+        cost_saved_usd: 0.0003,
+      }),
+    ];
+    const t = tallyUsage(events);
+    expect(t.cachedTokens).toBe(1024);
+    expect(t.costSavedUsd).toBeCloseTo(0.0003, 8);
+  });
+
+  it("cachedTokens/costSavedUsd default to 0 when the metrics are absent (back-compat)", () => {
+    const t = tallyUsage(oneTurn()); // oneTurn's LLM ENDs carry no cache metrics
+    expect(t.cachedTokens).toBe(0);
+    expect(t.costSavedUsd).toBe(0);
   });
 });
 
@@ -147,6 +183,8 @@ describe("cumulativeUsage (018 AC1 — fold over turns)", () => {
     completionTokens: 20,
     totalTokens: 120,
     costUsd: 0.001,
+    cachedTokens: 0,
+    costSavedUsd: 0,
     toolCalls: 1,
     ragHits: 4,
     ...over,
@@ -172,6 +210,8 @@ describe("cumulativeUsage (018 AC1 — fold over turns)", () => {
       completionTokens: 0,
       totalTokens: 0,
       costUsd: 0,
+      cachedTokens: 0,
+      costSavedUsd: 0,
       toolCalls: 0,
       ragHits: 0,
       partial: false,

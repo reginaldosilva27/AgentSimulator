@@ -112,6 +112,65 @@ async def test_llm_calls_carry_token_usage_and_cost():
         assert ev.metrics.get("cost_usd", -1) >= 0, f"no cost_usd on {ev.stage}"
 
 
+# A long prior turn so the *stable prefix* (system prompt + tool schemas + this
+# rendered history) clears OpenAI's ~1024-token cache floor — the measured bare
+# prefix is ~900 tokens, just under, so a short cold call legitimately caches
+# nothing (see spec 099). Padding history is the honest way to demonstrate the
+# win: it's real long-term memory the agent genuinely re-sends every turn.
+_CACHE_WARM_HISTORY = [
+    {
+        "message": "Give me a thorough overview of retrieval-augmented generation.",
+        "answer": (
+            "Retrieval-augmented generation grounds a language model in an external "
+            "knowledge base. " * 40
+        ),
+    }
+]
+
+
+async def test_prompt_caching_metrics_are_present_and_consistent():
+    # 099-prompt-caching (AC6) — every LLM call carries the cache metrics
+    # (`cached_tokens`, `cost_saved_usd`), and when the provider actually served the
+    # stable prefix from cache the saving is positive and the effective input cost is
+    # strictly below the all-fresh price. Honest about the ~1024-token floor / cache
+    # TTL: a run with no hit xfails (never fakes one). We warm the cache with one
+    # identical run first, then assert on the second, so a hit is likely.
+    from app.llm.pricing import cost_usd
+
+    # 1) Warm: same large stable prefix, so OpenAI writes it to its prompt cache.
+    await _run("What is top-k in retrieval?", history=_CACHE_WARM_HISTORY)
+    # 2) Measure: an identical prefix should now read from cache.
+    _answer, events = await _run("What is top-k in retrieval?", history=_CACHE_WARM_HISTORY)
+    llm_ends = [
+        e for e in events if e.phase == "end" and e.stage in ("agent.think", "llm.generate")
+    ]
+    assert llm_ends, "expected at least one LLM call"
+
+    # Shape (always holds): both keys present + non-negative, and a saving only ever
+    # accompanies real cached tokens — never a fabricated discount.
+    for ev in llm_ends:
+        cached = ev.metrics.get("cached_tokens", -1)
+        saved = ev.metrics.get("cost_saved_usd", -1)
+        assert cached >= 0, f"missing cached_tokens on {ev.stage}"
+        assert saved >= 0, f"missing cost_saved_usd on {ev.stage}"
+        if saved > 0:
+            assert cached > 0, f"saving without cached tokens on {ev.stage}"
+
+    # The win: a cache hit ⇒ effective cost strictly below the all-fresh price.
+    hits = [e for e in llm_ends if e.metrics.get("cached_tokens", 0) > 0]
+    if not hits:
+        pytest.xfail("no prompt-cache hit this run (below threshold or cold cache)")
+    for ev in hits:
+        model = "gpt-4.1-mini"  # the server default (llm/models.py); labels the price
+        prompt_tokens = int(ev.metrics["prompt_tokens"])
+        completion_tokens = int(ev.metrics["completion_tokens"])
+        cached = int(ev.metrics["cached_tokens"])
+        discounted = cost_usd(model, prompt_tokens, completion_tokens, cached_tokens=cached)
+        all_fresh = cost_usd(model, prompt_tokens, completion_tokens, cached_tokens=0)
+        assert discounted < all_fresh, "cache hit did not lower the effective cost"
+        assert ev.metrics["cost_saved_usd"] > 0
+
+
 async def test_llm_prompt_carries_context_window_and_budget():
     # 036-context-window-budget (AC4) — every reasoning round's `llm.prompt` END
     # carries the real model window (int) + the per-category token split (the six

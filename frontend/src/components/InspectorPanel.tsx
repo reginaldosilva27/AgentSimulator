@@ -687,6 +687,16 @@ function renderDetail(
               <KeyVal k={i.completionTokens} v={formatTokens(usage.completionTokens)} />
               <KeyVal k={i.totalTokens} v={formatTokens(usage.totalTokens)} />
               <KeyVal k={i.cost} v={formatUsd(usage.costUsd)} />
+              {/* 099-prompt-caching — cached slice + the money it saved, or an honest
+                  "cold call below threshold" hint when nothing was cached. */}
+              {usage.cachedTokens > 0 ? (
+                <>
+                  <KeyVal k={i.cachedTokens} v={formatTokens(usage.cachedTokens)} />
+                  <KeyVal k={i.saved} v={formatUsd(usage.costSavedUsd)} />
+                </>
+              ) : (
+                <p className="mt-1 text-[11px] leading-snug text-slate-400">{i.cacheColdHint}</p>
+              )}
             </Section>
           )}
         </>

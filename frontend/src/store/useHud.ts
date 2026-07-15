@@ -17,6 +17,8 @@ export const ZERO_USAGE: CumulativeUsage = {
   completionTokens: 0,
   totalTokens: 0,
   costUsd: 0,
+  cachedTokens: 0,
+  costSavedUsd: 0,
   toolCalls: 0,
   ragHits: 0,
   partial: false,

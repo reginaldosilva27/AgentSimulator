@@ -29,19 +29,61 @@ MODEL_PRICES: dict[str, tuple[float, float]] = {
     "gemini-3.1-pro-preview": (2.00, 12.00),
 }
 
+# 099-prompt-caching — USD per 1,000,000 **cached** input tokens. OpenAI bills the cached
+# slice of the prompt at a discount (~50% off for the 4o family, ~75% off for the 4.1
+# family); a model absent here bills cached tokens at its full input rate (no discount,
+# no crash). Same **labelled teaching approximation** caveat as MODEL_PRICES.
+CACHED_INPUT_PRICES: dict[str, float] = {
+    "gpt-4o-mini": 0.075,
+    "gpt-4o": 1.25,
+    "gpt-4.1": 0.50,
+    "gpt-4.1-mini": 0.10,
+    "gpt-4.1-nano": 0.025,
+}
 
-def cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    """Cost of a call in US$ from the price table; unknown model ⇒ 0.0."""
+
+def cost_usd(
+    model: str, prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0
+) -> float:
+    """Cost of a call in US$ from the price table; unknown model ⇒ 0.0.
+
+    099-prompt-caching: ``cached_tokens`` of ``prompt_tokens`` are billed at the model's
+    cached input rate (``CACHED_INPUT_PRICES``, defaulting to the full input rate when the
+    model isn't listed), the rest at the full input rate — never double-counted.
+    """
     input_rate, output_rate = MODEL_PRICES.get(model, (0.0, 0.0))
-    cost = prompt_tokens / 1_000_000 * input_rate + completion_tokens / 1_000_000 * output_rate
+    cached = max(0, min(cached_tokens, prompt_tokens))
+    cached_rate = CACHED_INPUT_PRICES.get(model, input_rate)
+    fresh = prompt_tokens - cached
+    cost = (
+        fresh / 1_000_000 * input_rate
+        + cached / 1_000_000 * cached_rate
+        + completion_tokens / 1_000_000 * output_rate
+    )
     return round(cost, 6)
 
 
+def cost_saved_usd(model: str, cached_tokens: int) -> float:
+    """US$ saved by the cache vs. billing those tokens at the full input rate (099)."""
+    input_rate, _ = MODEL_PRICES.get(model, (0.0, 0.0))
+    cached_rate = CACHED_INPUT_PRICES.get(model, input_rate)
+    saved = max(0, cached_tokens) / 1_000_000 * (input_rate - cached_rate)
+    return round(saved, 6)
+
+
 def usage_metrics(model: str, usage: TokenUsage) -> dict[str, float]:
-    """Trace ``metrics`` for one LLM call: tokens + priced cost (all floats)."""
+    """Trace ``metrics`` for one LLM call: tokens + priced cost (all floats).
+
+    099-prompt-caching adds ``cached_tokens`` and ``cost_saved_usd`` (both 0.0 when
+    nothing was cached); ``cost_usd`` is the true, cache-discounted cost.
+    """
     return {
         "prompt_tokens": float(usage.prompt_tokens),
         "completion_tokens": float(usage.completion_tokens),
         "total_tokens": float(usage.total_tokens),
-        "cost_usd": cost_usd(model, usage.prompt_tokens, usage.completion_tokens),
+        "cached_tokens": float(usage.cached_tokens),
+        "cost_usd": cost_usd(
+            model, usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens
+        ),
+        "cost_saved_usd": cost_saved_usd(model, usage.cached_tokens),
     }

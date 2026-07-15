@@ -322,6 +322,10 @@ export interface Strings {
     completionTokens: string;
     totalTokens: string;
     cost: string;
+    // 099-prompt-caching — cached-token line + saving + honest cold-call hint.
+    cachedTokens: string;
+    saved: string;
+    cacheColdHint: string;
     status: { active: string; done: string; idle: string };
   };
   comms: {
@@ -539,6 +543,9 @@ export interface Strings {
     streaming: (n: number) => string;
     tokens: (n: number) => string;
     tokensCost: (tok: string, usd: string) => string; // 011-token-cost
+    // 099-prompt-caching — appended to the LLM readout when the turn had a cache
+    // hit: how many tokens came from cache and the % of cost that saved.
+    cachedSaving: (tok: string, pct: string) => string;
     score: string;
     // 054-rag-block-expansion — the Vector DB readout when the Intermediate rerank
     // sub-stage has run: the rerank pool → kept top-k.
@@ -1458,6 +1465,9 @@ const en: Strings = {
     completionTokens: "completion tokens",
     totalTokens: "total tokens",
     cost: "cost",
+    cachedTokens: "cached tokens",
+    saved: "saved vs. all-fresh",
+    cacheColdHint: "Below cache threshold (first / small call) — the prefix caches once it passes ~1024 tokens.",
     status: { active: "active", done: "done", idle: "idle" },
   },
   comms: {
@@ -1781,6 +1791,7 @@ const en: Strings = {
     streaming: (n) => `streaming · ${n} tok`,
     tokens: (n) => `${n} tokens`,
     tokensCost: (tok, usd) => `${tok} tok · ${usd}`,
+    cachedSaving: (tok, pct) => `${tok} cached · −${pct}`,
     score: "score",
     reranked: (from, to) => `reranked ${from}→${to}`,
     hybridFused: (n) => `BM25+vector · fused ${n}`,
@@ -2740,6 +2751,9 @@ const pt: Strings = {
     completionTokens: "tokens de resposta",
     totalTokens: "tokens totais",
     cost: "custo",
+    cachedTokens: "tokens em cache",
+    saved: "economia vs. tudo novo",
+    cacheColdHint: "Abaixo do limiar de cache (1ª chamada / pequena) — o prefixo entra em cache ao passar de ~1024 tokens.",
     status: { active: "ativo", done: "concluído", idle: "ocioso" },
   },
   comms: {
@@ -3064,6 +3078,7 @@ const pt: Strings = {
     streaming: (n) => `transmitindo · ${n} tok`,
     tokens: (n) => `${n} tokens`,
     tokensCost: (tok, usd) => `${tok} tok · ${usd}`,
+    cachedSaving: (tok, pct) => `${tok} em cache · −${pct}`,
     score: "score",
     reranked: (from, to) => `reordenado ${from}→${to}`,
     hybridFused: (n) => `BM25+vetorial · fundido ${n}`,

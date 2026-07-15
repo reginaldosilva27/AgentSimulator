@@ -22,3 +22,8 @@ export function formatUsd(n: number): string {
 export function formatTps(n: number): string {
   return `~${Math.round(n)} tok/s`;
 }
+
+/** A fraction as a rounded whole percent: 0.74 → "74%" (099-prompt-caching). */
+export function formatPct(fraction: number): string {
+  return `${Math.round(fraction * 100)}%`;
+}

@@ -38,6 +38,11 @@ export interface TurnUsage {
   completionTokens: number;
   totalTokens: number;
   costUsd: number;
+  // 099-prompt-caching: of `promptTokens`, how many the provider served from its
+  // automatic prompt cache, and the US$ that saved vs. billing them all fresh.
+  // Summed across the turn's LLM calls; 0 when nothing was cached (honest cold call).
+  cachedTokens: number;
+  costSavedUsd: number;
   toolCalls: number; // each item the agent elected on `agent.think.tool_calls`
   ragHits: number; // retrieved chunks
 }
@@ -48,6 +53,8 @@ export interface CumulativeUsage {
   completionTokens: number;
   totalTokens: number;
   costUsd: number;
+  cachedTokens: number; // 099-prompt-caching
+  costSavedUsd: number; // 099-prompt-caching
   toolCalls: number;
   ragHits: number;
   // True when at least one turn's trace was evicted → the totals under-count.
@@ -125,6 +132,8 @@ export function tallyUsage(events: TraceEvent[]): TurnUsage {
     completionTokens: 0,
     totalTokens: 0,
     costUsd: 0,
+    cachedTokens: 0,
+    costSavedUsd: 0,
     toolCalls: 0,
     ragHits: 0,
   };
@@ -138,6 +147,9 @@ export function tallyUsage(events: TraceEvent[]): TurnUsage {
       u.completionTokens += num(ev.metrics.completion_tokens);
       u.totalTokens += num(ev.metrics.total_tokens);
       u.costUsd += num(ev.metrics.cost_usd);
+      // 099-prompt-caching — additive metrics; absent on legacy traces ⇒ 0.
+      u.cachedTokens += num(ev.metrics.cached_tokens);
+      u.costSavedUsd += num(ev.metrics.cost_saved_usd);
     }
     // A RAG hit = each chunk actually retrieved for the turn (orthogonal to
     // tool calls — a single search_knowledge_base call can return many chunks).
@@ -159,6 +171,8 @@ export function cumulativeUsage(records: (TurnUsage | null)[]): CumulativeUsage 
     completionTokens: 0,
     totalTokens: 0,
     costUsd: 0,
+    cachedTokens: 0,
+    costSavedUsd: 0,
     toolCalls: 0,
     ragHits: 0,
     partial: false,
@@ -172,6 +186,8 @@ export function cumulativeUsage(records: (TurnUsage | null)[]): CumulativeUsage 
     c.completionTokens += r.completionTokens;
     c.totalTokens += r.totalTokens;
     c.costUsd += r.costUsd;
+    c.cachedTokens += r.cachedTokens;
+    c.costSavedUsd += r.costSavedUsd;
     c.toolCalls += r.toolCalls;
     c.ragHits += r.ragHits;
   }

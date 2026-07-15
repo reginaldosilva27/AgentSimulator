@@ -15,6 +15,8 @@ const noUsage: UsageTotals = {
   completionTokens: 0,
   totalTokens: 0,
   costUsd: 0,
+  cachedTokens: 0,
+  costSavedUsd: 0,
 };
 
 function llmPromptEnd(data: Record<string, unknown>): TraceEvent {
@@ -56,6 +58,39 @@ describe("readoutFor — rag station reranked sub-stage (054-rag-block-expansion
     };
     const out = readoutFor("rag", rt([ret]), ro, noUsage);
     expect(out).toBe(`top-4 · ${ro.score} 0.47`);
+  });
+});
+
+describe("readoutFor — llm station cache saving (099-prompt-caching)", () => {
+  const genEnd = end("llm.generate", { answer: "hi" });
+
+  it("appends the cached-tokens + saving readout when the turn had a cache hit", () => {
+    const usage: UsageTotals = {
+      rounds: 2,
+      promptTokens: 2500,
+      completionTokens: 40,
+      totalTokens: 2540,
+      costUsd: 0.0009,
+      cachedTokens: 1200,
+      costSavedUsd: 0.0003, // saved 0.0003 of a would-be 0.0012 → 25%
+    };
+    const out = readoutFor("llm", rt([genEnd]), ro, usage);
+    expect(out).toContain(ro.tokensCost("2.5k", "$0.0009"));
+    expect(out).toContain(ro.cachedSaving("1.2k", "25%"));
+  });
+
+  it("shows no cache readout when nothing was cached (Simple / cold call)", () => {
+    const usage: UsageTotals = {
+      rounds: 1,
+      promptTokens: 300,
+      completionTokens: 20,
+      totalTokens: 320,
+      costUsd: 0.0001,
+      cachedTokens: 0,
+      costSavedUsd: 0,
+    };
+    const out = readoutFor("llm", rt([genEnd]), ro, usage);
+    expect(out).toBe(ro.tokensCost("320", "$0.0001"));
   });
 });
 

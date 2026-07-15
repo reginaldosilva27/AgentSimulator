@@ -48,16 +48,24 @@ class TokenUsage:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    # 099-prompt-caching: how many of ``prompt_tokens`` the provider served from its
+    # automatic prompt cache (OpenAI ``prompt_tokens_details.cached_tokens``, surfaced by
+    # LangChain as ``input_token_details.cache_read``). 0 when nothing was cached or the
+    # provider doesn't report it — so the pricing layer can bill that slice at the
+    # discounted cached rate and show the saving.
+    cached_tokens: int = 0
 
     @classmethod
     def from_metadata(cls, md: dict[str, Any] | None) -> TokenUsage | None:
-        """Build from LangChain ``usage_metadata`` (input/output/total tokens)."""
+        """Build from LangChain ``usage_metadata`` (input/output/total + cache_read)."""
         if not md:
             return None
+        details = md.get("input_token_details") or {}
         return cls(
             prompt_tokens=int(md.get("input_tokens", 0)),
             completion_tokens=int(md.get("output_tokens", 0)),
             total_tokens=int(md.get("total_tokens", 0)),
+            cached_tokens=int(details.get("cache_read", 0)),
         )
 
 

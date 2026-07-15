@@ -46,6 +46,10 @@ export interface UsageTotals {
   completionTokens: number;
   totalTokens: number;
   costUsd: number;
+  // 099-prompt-caching — cached input tokens across the run's LLM calls and the
+  // US$ they saved vs. the all-fresh price. 0 when nothing was cached.
+  cachedTokens: number;
+  costSavedUsd: number;
 }
 
 export interface DerivedView {
