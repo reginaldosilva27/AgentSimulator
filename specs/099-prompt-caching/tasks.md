@@ -42,8 +42,10 @@
   — warms the cache, then asserts a later LLM call reports `cached_tokens > 0` and
   effective input cost < all-fresh; xfail-with-reason if no hit. Passed live.
 - [x] **T15 — refactor**: `ruff format` applied; all green.
-- [ ] **T16 — demo recapture (deferred)**: decide whether to re-capture the mocked 058
-  GitHub-Pages fixtures so the demo shows the cache readout (standing directive).
+- [x] **T16 — demo recapture**: re-captured all 88 mocked 058 fixtures against the live
+  backend (`scripts/capture_demo_traces.py`). Real cache hits (1024–1920 cached tokens)
+  across nearly every scenario incl. the default `rag.simple`; the 8 `verify` fixtures
+  stay honestly cold (terse persona ⇒ system prefix < 1024). Demo fixture tests + tsc green.
 
 ## Definition of done
 
