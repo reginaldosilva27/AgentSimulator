@@ -39,6 +39,20 @@ QUESTIONS = [
     ("mcp", {"en": "How do MCP tools work?", "pt": "Como funcionam as ferramentas MCP?"}),
     ("time", {"en": "What time is it right now?", "pt": "Que horas são agora?"}),
 ]
+# To make the DeepAgents runtime VISIBLE in the demo (plan + per-search "Sources used"
+# grouping), we pair it with a thorough-research `agent_prompt` persona — the same honest
+# technique the `verify` scenario uses below. The current default model answers "seemingly
+# simple" questions in one reflex search despite the planning mandate, so a genuine but
+# shallow run is indistinguishable from ReAct and the demo would fail to showcase the
+# runtime. The persona nudges the agent to plan and to research each sub-question with its
+# own knowledge-base search — exactly what a real DeepAgent does. The trace stays a genuine
+# run (constitution §3 — never hand-authored); the persona is a legitimate 006 request input.
+DEEPAGENTS_PERSONA = (
+    "Work thoroughly and agentically. Break the user question into its distinct "
+    "sub-questions and research EACH one with a SEPARATE search_knowledge_base call "
+    "(do not merge them into a single search). Plan your steps first, then execute them."
+)
+
 # Each demo scenario → the request flags that make the live backend reproduce it.
 SCENARIOS: dict[str, dict] = {
     "simple": {},
@@ -49,14 +63,21 @@ SCENARIOS: dict[str, dict] = {
     # per-search "Sources used" grouping just like a live run. DeepAgents COMPOSES with the
     # reranker and the RAGLESS strategy (gated purely on runtime), so each combination the
     # Build popover can produce keys its own captured trace — the demo matches live exactly.
-    "deepagents": {"runtime": "deepagents"},
-    "deepagents-rerank": {"runtime": "deepagents", "rerank": True},
-    "deepagents-ragless": {"runtime": "deepagents", "ragless": True},
+    # All deepagents variants carry DEEPAGENTS_PERSONA so the planner + multi-search reliably
+    # fire (see the note above).
+    "deepagents": {"runtime": "deepagents", "agent_prompt": DEEPAGENTS_PERSONA},
+    "deepagents-rerank": {"runtime": "deepagents", "rerank": True, "agent_prompt": DEEPAGENTS_PERSONA},
+    "deepagents-ragless": {"runtime": "deepagents", "ragless": True, "agent_prompt": DEEPAGENTS_PERSONA},
     # 070-hybrid-search × DeepAgents — the Build popover lets hybrid (vector-only) compose
     # with the DeepAgents runtime, so these combos need their own captured traces or the
     # demo would replay a non-hybrid deepagents trace with Hybrid checked (card shows inactive).
-    "deepagents-hybrid": {"runtime": "deepagents", "hybrid": True},
-    "deepagents-hybrid-rerank": {"runtime": "deepagents", "hybrid": True, "rerank": True},
+    "deepagents-hybrid": {"runtime": "deepagents", "hybrid": True, "agent_prompt": DEEPAGENTS_PERSONA},
+    "deepagents-hybrid-rerank": {
+        "runtime": "deepagents",
+        "hybrid": True,
+        "rerank": True,
+        "agent_prompt": DEEPAGENTS_PERSONA,
+    },
     # 070-hybrid-search — the BM25 + vector RRF fusion sub-stage, and its compose-with-
     # rerank path (the two combos the Build popover produces with hybrid on, ReAct runtime).
     "hybrid": {"hybrid": True},
