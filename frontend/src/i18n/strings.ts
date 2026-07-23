@@ -83,20 +83,42 @@ export interface Strings {
     paletteHint: string;
     examples: string; // 101 — the "load an example scenario" menu label
     emptyCanvas: string;
-    load: string;
-    loadHint: string;
+    // 103 — the Little's-Law load drive (concurrent users ÷ think time = rps).
+    usersLabel: string;
+    thinkTime: string;
+    thinkTimeHint: string;
+    usersReadout: (users: string, rps: string) => string;
+    // 103 — agent fan-out + honest-overload + derived readouts.
+    callsPerRequest: string;
+    callsHint: string;
+    shedding: (n: string) => string;
+    e2eLatency: string;
+    e2eLatencyHint: string;
+    llmCost: string;
+    llmCostHint: string;
     reset: string;
     scaling: string; // the selected-node scaling panel heading
     metric: { qps: string; latency: string; util: string; capacity: string };
     status: { healthy: string; warning: string; critical: string; unreachable: string };
     size: string;
-    replicas: string;
+    // 104 — the ℹ️ explainer toggle + the capacity formula hint. The horizontal
+    // unit label is per-kind (KIND_META.scaling.unit), no generic "replicas".
+    infoLabel: string;
+    capacityHint: string;
+    // 105 — the client-side LLM routing tax note (pct already formatted, e.g. "38%").
+    routingTax: (pct: string, n: number) => string;
+    // 106 — the per-node region annotation (multi-region pools).
+    region: string;
+    regionHint: string;
+    regionNone: string;
+    // 107 — wiring gestures taught in the palette footer.
+    autoWireHint: string;
+    edgeHint: string;
     sizes: { small: string; medium: string; large: string; xlarge: string };
     cacheHitRatio: string;
     bottleneck: string;
     selectHint: string;
     remove: string;
-    users: (n: number) => string; // the offered-load readout ("≈ N users / rps")
   };
   // 058-online-demo-mode: the backend-less GitHub Pages showcase build.
   demo: {
@@ -1276,8 +1298,20 @@ const en: Strings = {
     paletteHint: "Drag onto the canvas to add",
     examples: "Examples",
     emptyCanvas: "Drag a component here to start building",
-    load: "Users / RPS",
-    loadHint: "Offered load driving the model",
+    usersLabel: "Concurrent users",
+    thinkTime: "Think time",
+    thinkTimeHint:
+      "Seconds between requests per user — req/s = users ÷ think time (Little's Law)",
+    usersReadout: (users, rps) => `${users} users ≈ ${rps} req/s`,
+    callsPerRequest: "Calls per request",
+    callsHint:
+      "An agent turn makes 2–5 model calls (ReAct loop). Set it on the AI Gateway OR the LLM behind it — not both.",
+    shedding: (n) => `dropping ~${n} req/s (429)`,
+    e2eLatency: "End-to-end latency",
+    e2eLatencyHint: "Sum of node latencies along the slowest (critical) path",
+    llmCost: "LLM cost",
+    llmCostHint:
+      "≈ $0.0016 per call (2k input + 500 output tokens at gpt-4.1-mini prices) × the modeled LLM call rate",
     reset: "Reset canvas",
     scaling: "Scaling",
     metric: { qps: "QPS", latency: "Latency", util: "Utilization", capacity: "Capacity" },
@@ -1288,13 +1322,21 @@ const en: Strings = {
       unreachable: "Unreachable",
     },
     size: "Instance size",
-    replicas: "Replicas",
+    infoLabel: "About this component",
+    capacityHint: "capacity = component base × instance size × units",
+    routingTax: (pct, n) =>
+      `Client-side LLM routing: −${pct} capacity (managing ${n} deployments — an AI Gateway removes this)`,
+    region: "Region",
+    regionHint:
+      "Pools in different regions survive a region outage, cut latency near users and meet data residency. An annotation for now — challenges will score it.",
+    regionNone: "No region",
+    autoWireHint: "Tip: with a node selected, a dropped component is wired from it automatically",
+    edgeHint: "Click a link and press Backspace to remove it",
     sizes: { small: "Small", medium: "Medium", large: "Large", xlarge: "XLarge" },
     cacheHitRatio: "Cache hit ratio",
     bottleneck: "Bottleneck",
     selectHint: "Select a component to scale it",
     remove: "Remove",
-    users: (n) => `≈ ${n.toLocaleString("en-US")} req/s`,
   },
   demo: {
     bannerLead: "Demo mode — sample questions only, replaying real captured runs.",
@@ -2591,8 +2633,20 @@ const pt: Strings = {
     paletteHint: "Arraste para o canvas para adicionar",
     examples: "Exemplos",
     emptyCanvas: "Arraste um componente aqui para começar a montar",
-    load: "Usuários / RPS",
-    loadHint: "Carga oferecida que alimenta o modelo",
+    usersLabel: "Usuários simultâneos",
+    thinkTime: "Tempo entre mensagens",
+    thinkTimeHint:
+      "Segundos entre requests por usuário — req/s = usuários ÷ tempo entre mensagens (Lei de Little)",
+    usersReadout: (users, rps) => `${users} usuários ≈ ${rps} req/s`,
+    callsPerRequest: "Chamadas por request",
+    callsHint:
+      "Um turno de agente faz 2–5 chamadas de modelo (loop ReAct). Configure no AI Gateway OU no LLM atrás dele — nunca nos dois.",
+    shedding: (n) => `derrubando ~${n} req/s (429)`,
+    e2eLatency: "Latência fim-a-fim",
+    e2eLatencyHint: "Soma das latências ao longo do caminho (ramo) mais lento",
+    llmCost: "Custo do LLM",
+    llmCostHint:
+      "≈ US$ 0,0016 por chamada (2k tokens de entrada + 500 de saída a preços do gpt-4.1-mini) × a taxa de chamadas de LLM modelada",
     reset: "Limpar canvas",
     scaling: "Escala",
     metric: { qps: "QPS", latency: "Latência", util: "Utilização", capacity: "Capacidade" },
@@ -2603,13 +2657,22 @@ const pt: Strings = {
       unreachable: "Inalcançável",
     },
     size: "Tamanho da instância",
-    replicas: "Réplicas",
+    infoLabel: "Sobre este componente",
+    capacityHint: "capacidade = base do componente × tamanho da instância × unidades",
+    routingTax: (pct, n) =>
+      `Roteamento de LLM no app: −${pct} de capacidade (gerenciando ${n} deployments — um AI Gateway remove isso)`,
+    region: "Região",
+    regionHint:
+      "Pools em regiões diferentes sobrevivem à queda de uma região, reduzem a latência perto dos usuários e atendem residência de dados. Por ora é uma anotação — os desafios vão pontuar isso.",
+    regionNone: "Sem região",
+    autoWireHint:
+      "Dica: com um nó selecionado, um componente solto no canvas já é ligado a partir dele",
+    edgeHint: "Clique numa ligação e pressione Backspace para removê-la",
     sizes: { small: "Pequeno", medium: "Médio", large: "Grande", xlarge: "Extra grande" },
     cacheHitRatio: "Taxa de acerto do cache",
     bottleneck: "Gargalo",
     selectHint: "Selecione um componente para escalá-lo",
     remove: "Remover",
-    users: (n) => `≈ ${n.toLocaleString("pt-BR")} req/s`,
   },
   demo: {
     bannerLead: "Modo demo — apenas perguntas de exemplo, reproduzindo execuções reais capturadas.",

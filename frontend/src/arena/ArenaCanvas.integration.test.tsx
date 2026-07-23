@@ -7,7 +7,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ArenaCanvas } from "./ArenaCanvas";
+import { ArenaCanvas, edgeIdsToRemove } from "./ArenaCanvas";
 import { BENCHMARKS } from "./components";
 import { useArena } from "./store";
 
@@ -26,7 +26,8 @@ beforeEach(() => {
   useArena.setState({
     nodes: [
       { id: "backend-1", kind: "backend", size: "medium", replicas: 1, x: 0, y: 0 },
-      { id: "llm-2", kind: "llm", size: "medium", replicas: 1, x: 220, y: 0 },
+      // 106 — region annotation renders as a badge on the canvas node.
+      { id: "llm-2", kind: "llm", size: "medium", replicas: 1, x: 220, y: 0, region: "eu-west" },
       { id: "appDb-3", kind: "appDb", size: "medium", replicas: 1, x: 440, y: 0 },
     ],
     edges: [
@@ -59,5 +60,32 @@ describe("ArenaCanvas real render (integration)", () => {
     // over-loaded LLM shows the bottleneck badge — the real model → node path.
     expect(screen.getAllByText("QPS").length).toBeGreaterThan(0);
     expect(screen.getByText(/bottleneck/i)).toBeTruthy();
+
+    // 106 AC3 — the region annotation shows as a badge on the node box.
+    expect(screen.getByText("eu-west")).toBeTruthy();
+  });
+
+  it("renders enlarged, grabbable connection handles (107 AC4)", () => {
+    const { container } = render(
+      <ReactFlowProvider>
+        <ArenaCanvas />
+      </ReactFlowProvider>,
+    );
+    const handles = container.querySelectorAll(".arena-handle");
+    expect(handles.length).toBeGreaterThan(0);
+    expect((handles[0] as HTMLElement).style.width).toBe("14px");
+  });
+});
+
+describe("edge removal change filter (107 AC3)", () => {
+  it("extracts only the remove-change ids", () => {
+    expect(
+      edgeIdsToRemove([
+        { type: "remove", id: "a-b" },
+        { type: "select", id: "b-c", selected: true },
+        { type: "remove", id: "c-d" },
+      ]),
+    ).toEqual(["a-b", "c-d"]);
+    expect(edgeIdsToRemove([{ type: "select", id: "x-y", selected: false }])).toEqual([]);
   });
 });

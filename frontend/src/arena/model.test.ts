@@ -7,8 +7,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { BENCHMARKS, SIZE_MULTIPLIER } from "./components";
-import { computeMetrics, effectiveCapacity, type ArenaDesign } from "./model";
+import { BENCHMARKS, ROUTING_TAX_CAP, ROUTING_TAX_RATE, SIZE_MULTIPLIER } from "./components";
+import {
+  computeMetrics,
+  effectiveCapacity,
+  endToEndLatencyMs,
+  routingTaxFor,
+  type ArenaDesign,
+} from "./model";
 
 const n = (id: string, kind: Parameters<typeof effectiveCapacity>[0]["kind"], extra = {}) => ({
   id,
@@ -133,6 +139,124 @@ describe("arena capacity model — cache re-routes load (AC6)", () => {
     expect(cachedDb.arriving).toBeCloseTo(L * 0.2, 5); // only misses reach the DB
     expect(cachedDb.arriving).toBeLessThan(directDb.arriving);
     expect(cachedDb.utilization).toBeLessThan(directDb.utilization);
+  });
+});
+
+// --- 103-arena-realism ------------------------------------------------------
+
+describe("calls-per-request fan-out (103 AC2)", () => {
+  it("multiplies the load arriving at a node by its callsPerRequest", () => {
+    // An agent turn makes ~3 model calls: 100 user req/s → 300 LLM calls/s.
+    const design: ArenaDesign = {
+      nodes: [
+        n("be", "backend"),
+        n("llm", "llm", { callsPerRequest: 3, replicas: 10 }), // cap 500
+      ],
+      edges: [e("be", "llm")],
+    };
+    const m = computeMetrics(design, 100);
+    expect(m.get("llm")!.arriving).toBe(300); // 100 requests × 3 calls
+    expect(m.get("llm")!.utilization).toBeCloseTo(300 / 500, 5);
+  });
+});
+
+describe("load enters only at client nodes (103 AC3)", () => {
+  it("gives an orphan node 0 load when a client source exists", () => {
+    const design: ArenaDesign = {
+      nodes: [n("c", "client"), n("be", "backend"), n("stray", "cache")],
+      edges: [e("c", "be")], // "stray" is unwired
+    };
+    const m = computeMetrics(design, 1000);
+    expect(m.get("be")!.arriving).toBe(1000); // via the client
+    expect(m.get("stray")!.arriving).toBe(0); // orphan idles honestly
+  });
+
+  it("falls back to all roots when no client node exists (back-compat)", () => {
+    const design: ArenaDesign = { nodes: [n("be", "backend")], edges: [] };
+    expect(computeMetrics(design, 500).get("be")!.arriving).toBe(500);
+  });
+});
+
+describe("honest overload — shed rate (103 AC4)", () => {
+  it("reports the shed req/s past capacity (and 0 when healthy)", () => {
+    const cap = BENCHMARKS.llm.baseCapacity;
+    const design: ArenaDesign = { nodes: [n("a", "llm")], edges: [] };
+    expect(computeMetrics(design, cap * 3).get("a")!.shedRps).toBeCloseTo(cap * 2, 5);
+    expect(computeMetrics(design, cap / 2).get("a")!.shedRps).toBe(0);
+  });
+});
+
+describe("end-to-end latency (103 AC5)", () => {
+  it("sums node latencies along the critical (longest) path", () => {
+    const design: ArenaDesign = {
+      nodes: [n("c", "client"), n("be", "backend"), n("llm", "llm", { replicas: 10 })],
+      edges: [e("c", "be"), e("be", "llm")],
+    };
+    const L = 100; // light load, so latencies ≈ base/(1-u) per node
+    const m = computeMetrics(design, L);
+    const expected =
+      m.get("c")!.latencyMs + m.get("be")!.latencyMs + m.get("llm")!.latencyMs;
+    expect(endToEndLatencyMs(design, L)).toBeCloseTo(expected, 5);
+  });
+
+  it("takes the longest branch, not the shortest", () => {
+    const design: ArenaDesign = {
+      nodes: [n("be", "backend"), n("llm", "llm", { replicas: 10 }), n("db", "appDb")],
+      edges: [e("be", "llm"), e("be", "db")], // llm branch is far slower
+    };
+    const L = 100;
+    const m = computeMetrics(design, L);
+    expect(endToEndLatencyMs(design, L)).toBeCloseTo(
+      m.get("be")!.latencyMs + m.get("llm")!.latencyMs,
+      5,
+    );
+  });
+});
+
+describe("client-side LLM routing tax (105 AC1–AC3)", () => {
+  const beCap = BENCHMARKS.backend.baseCapacity;
+
+  it("taxes a non-router node per directly-managed LLM deployment beyond the first (AC1)", () => {
+    const one: ArenaDesign = {
+      nodes: [n("be", "backend"), n("llm", "llm")],
+      edges: [e("be", "llm")],
+    };
+    expect(routingTaxFor(one, "be").tax).toBe(0); // D=1 → no tax
+
+    const twenty: ArenaDesign = {
+      nodes: [n("be", "backend"), n("llm", "llm", { replicas: 20 })],
+      edges: [e("be", "llm")],
+    };
+    const t20 = routingTaxFor(twenty, "be");
+    expect(t20.deployments).toBe(20);
+    expect(t20.tax).toBeCloseTo(Math.min(ROUTING_TAX_CAP, ROUTING_TAX_RATE * 19), 6);
+    // capacity in the metrics reflects the tax
+    const m = computeMetrics(twenty, 100);
+    expect(m.get("be")!.capacity).toBeCloseTo(beCap * (1 - t20.tax), 5);
+    expect(m.get("be")!.routingTax).toBeCloseTo(t20.tax, 6);
+  });
+
+  it("utilization rises monotonically as the backend manages more deployments (AC2)", () => {
+    const util = (replicas: number) => {
+      const d: ArenaDesign = {
+        nodes: [n("be", "backend"), n("llm", "llm", { replicas })],
+        edges: [e("be", "llm")],
+      };
+      return computeMetrics(d, 1000).get("be")!.utilization;
+    };
+    expect(util(5)).toBeGreaterThan(util(1));
+    expect(util(20)).toBeGreaterThan(util(5));
+  });
+
+  it("an AI Gateway in between removes the backend's tax; routers are exempt (AC3)", () => {
+    const gated: ArenaDesign = {
+      nodes: [n("be", "backend"), n("gw", "aiGateway"), n("llm", "llm", { replicas: 20 })],
+      edges: [e("be", "gw"), e("gw", "llm")],
+    };
+    expect(routingTaxFor(gated, "be").tax).toBe(0); // the gateway holds the endpoints now
+    expect(routingTaxFor(gated, "gw").tax).toBe(0); // purpose-built router — exempt
+    const m = computeMetrics(gated, 100);
+    expect(m.get("be")!.capacity).toBeCloseTo(beCap, 5); // untaxed again
   });
 });
 

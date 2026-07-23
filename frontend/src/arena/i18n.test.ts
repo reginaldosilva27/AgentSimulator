@@ -36,9 +36,13 @@ describe("arena chrome i18n (AC11)", () => {
     }
   });
 
-  it("has the offered-load readout builder in both languages", () => {
-    expect(en.users(100000)).toContain("100");
-    expect(pt.users(100000)).toContain("100");
+  it("has the load readout + shedding builders in both languages (103)", () => {
+    expect(en.usersReadout("100,000", "1,667")).toContain("100,000");
+    expect(pt.usersReadout("100.000", "1.667")).toContain("100.000");
+    expect(en.shedding("250")).toContain("250");
+    expect(pt.shedding("250")).toContain("250");
+    expect(en.shedding("250")).toMatch(/429/);
+    expect(pt.shedding("250")).toMatch(/429/);
   });
 });
 
@@ -51,5 +55,33 @@ describe("arena component labels i18n (AC11)", () => {
       expect(meta.description.en.trim(), `${kind} description.en`).toBeTruthy();
       expect(meta.description.pt.trim(), `${kind} description.pt`).toBeTruthy();
     }
+  });
+});
+
+describe("scaling vocabulary + info explainers (104 AC1/AC6)", () => {
+  it("gives every kind a bilingual info paragraph", () => {
+    for (const kind of PALETTE_ORDER) {
+      const meta = KIND_META[kind];
+      expect(meta.info.en.trim(), `${kind} info.en`).toBeTruthy();
+      expect(meta.info.pt.trim(), `${kind} info.pt`).toBeTruthy();
+    }
+  });
+
+  it("gives every scalable kind a bilingual unit + size meaning; client is not scalable", () => {
+    expect(KIND_META.client.scaling).toBeNull(); // the load source has no knobs
+    for (const kind of PALETTE_ORDER) {
+      const s = KIND_META[kind].scaling;
+      if (kind === "client") continue;
+      expect(s, `${kind} scaling`).not.toBeNull();
+      expect(s!.unit.en.trim(), `${kind} unit.en`).toBeTruthy();
+      expect(s!.unit.pt.trim(), `${kind} unit.pt`).toBeTruthy();
+      expect(s!.sizeMeaning.en.trim(), `${kind} sizeMeaning.en`).toBeTruthy();
+      expect(s!.sizeMeaning.pt.trim(), `${kind} sizeMeaning.pt`).toBeTruthy();
+    }
+  });
+
+  it("labels the LLM's horizontal unit as deployments (not containers)", () => {
+    expect(KIND_META.llm.scaling!.unit.en).toMatch(/deployment/i);
+    expect(KIND_META.llm.scaling!.unit.pt).toMatch(/deployment/i);
   });
 });

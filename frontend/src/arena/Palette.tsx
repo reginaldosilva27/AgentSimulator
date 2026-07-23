@@ -39,9 +39,12 @@ export function Palette() {
           </div>
         );
       })}
-      <p className="mt-1 border-t border-[var(--color-line)] pt-2 text-[9.5px] leading-snug text-[var(--color-muted)]">
-        {t.arena.selectHint}
-      </p>
+      <div className="mt-1 space-y-1 border-t border-[var(--color-line)] pt-2 text-[9.5px] leading-snug text-[var(--color-muted)]">
+        <p>{t.arena.selectHint}</p>
+        {/* 107 — the two wiring gestures, taught where the dragging starts. */}
+        <p>{t.arena.autoWireHint}</p>
+        <p>{t.arena.edgeHint}</p>
+      </div>
     </aside>
   );
 }

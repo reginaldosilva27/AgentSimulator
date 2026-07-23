@@ -8,7 +8,44 @@ import { ARENA_STORAGE_KEY, loadArena, useArena } from "./store";
 beforeEach(() => {
   localStorage.clear();
   // Reset the singleton store to a clean slate between tests.
-  useArena.setState({ nodes: [], edges: [], offeredLoad: 1000, exampleId: null });
+  useArena.setState({
+    nodes: [],
+    edges: [],
+    offeredLoad: 1000,
+    users: 30_000,
+    thinkTimeSec: 30,
+    exampleId: null,
+  });
+});
+
+describe("arena store — Little's Law drive (103 AC1)", () => {
+  it("derives offeredLoad = users / thinkTime from either control", () => {
+    useArena.getState().setUsers(60_000);
+    expect(useArena.getState().offeredLoad).toBe(2000); // 60k / 30s
+    useArena.getState().setThinkTime(60);
+    expect(useArena.getState().offeredLoad).toBe(1000); // 60k / 60s
+    expect(useArena.getState().users).toBe(60_000);
+  });
+
+  it("migrates a pre-103 blob (no users) by deriving users from the stored rps", () => {
+    localStorage.setItem(
+      ARENA_STORAGE_KEY,
+      JSON.stringify({ nodes: [], edges: [], offeredLoad: 500 }),
+    );
+    const restored = loadArena();
+    expect(restored.offeredLoad).toBe(500); // the modeled rps is preserved
+    expect(restored.users / restored.thinkTimeSec).toBeCloseTo(500, 0);
+  });
+
+  it("setCallsPerRequest updates a node (min 1) and clears the example selection", () => {
+    const id = useArena.getState().addNode("llm", { x: 0, y: 0 });
+    useArena.getState().loadExample("simple-rag");
+    const llm = useArena.getState().nodes.find((n) => n.kind === "llm")!;
+    useArena.getState().setCallsPerRequest(llm.id, 3);
+    expect(useArena.getState().nodes.find((n) => n.id === llm.id)!.callsPerRequest).toBe(3);
+    expect(useArena.getState().exampleId).toBeNull(); // structural edit
+    void id;
+  });
 });
 
 describe("arena store — composition + persistence (AC9)", () => {
@@ -60,7 +97,8 @@ describe("arena store — composition + persistence (AC9)", () => {
 
     const live = useArena.getState();
     expect(live.nodes).toHaveLength(preset.nodes.length);
-    expect(live.offeredLoad).toBe(preset.offeredLoad);
+    expect(live.users).toBe(preset.users);
+    expect(live.offeredLoad).toBe(Math.round(preset.users / preset.thinkTimeSec));
     // survives a reload
     const restored = loadArena();
     expect(restored.nodes).toHaveLength(preset.nodes.length);
@@ -91,6 +129,44 @@ describe("arena store — composition + persistence (AC9)", () => {
     const id = useArena.getState().nodes[0].id;
     useArena.getState().dragNode(id, { x: 5, y: 5 });
     expect(useArena.getState().exampleId).toBe("simple-rag");
+  });
+
+  it("setRegion annotates a node, persists, and clears the example selection (106 AC1)", () => {
+    useArena.getState().loadExample("prod");
+    const llm = useArena.getState().nodes.find((n) => n.kind === "llm")!;
+    useArena.getState().setRegion(llm.id, "sa-east");
+    expect(useArena.getState().nodes.find((n) => n.id === llm.id)!.region).toBe("sa-east");
+    expect(useArena.getState().exampleId).toBeNull(); // structural edit
+    expect(loadArena().nodes.find((n) => n.id === llm.id)!.region).toBe("sa-east"); // persisted
+
+    useArena.getState().setRegion(llm.id, null); // clearable
+    expect(useArena.getState().nodes.find((n) => n.id === llm.id)!.region).toBeUndefined();
+
+    useArena.getState().setRegion(llm.id, "not-a-region"); // invalid → ignored
+    expect(useArena.getState().nodes.find((n) => n.id === llm.id)!.region).toBeUndefined();
+  });
+
+  it("dropNode auto-wires from the selected node and selects the new one (107 AC1/AC2)", () => {
+    const gw = useArena.getState().addNode("aiGateway", { x: 0, y: 0 });
+    useArena.getState().select(gw);
+
+    const llm = useArena.getState().dropNode("llm", { x: 200, y: 0 });
+    const s = useArena.getState();
+    expect(s.edges).toContainEqual({ id: `${gw}-${llm}`, source: gw, target: llm });
+    expect(s.selectedId).toBe(llm); // chaining: the next drop wires from the LLM
+    expect(loadArena().edges).toHaveLength(1); // persisted like any edit
+
+    // With nothing selected, a drop adds a free node (no edge).
+    useArena.getState().select(null);
+    useArena.getState().dropNode("cache", { x: 400, y: 0 });
+    expect(useArena.getState().edges).toHaveLength(1);
+  });
+
+  it("removing the selected node clears the selection (107 AC2)", () => {
+    const id = useArena.getState().addNode("backend", { x: 0, y: 0 });
+    useArena.getState().select(id);
+    useArena.getState().removeNode(id);
+    expect(useArena.getState().selectedId).toBeNull();
   });
 
   it("dragNode updates state without persisting; moveNode commits on drop", () => {

@@ -8,24 +8,40 @@
 
 import { create } from "zustand";
 
-import { DEFAULT_HIT_RATIO, INSTANCE_SIZES, type ArenaKind, type InstanceSize } from "./components";
+import {
+  ARENA_REGIONS,
+  DEFAULT_HIT_RATIO,
+  INSTANCE_SIZES,
+  type ArenaKind,
+  type ArenaRegion,
+  type InstanceSize,
+} from "./components";
 import { EXAMPLES, defaultDesign } from "./examples";
-import type { ArenaEdge, ArenaNodeSpec } from "./model";
+import { rpsOf, type ArenaEdge, type ArenaNodeSpec } from "./model";
 
 /** A placed node: the model spec plus its canvas position. */
 export interface ArenaNode extends ArenaNodeSpec {
   x: number;
   y: number;
+  /** 106 — optional region annotation (pool intent; the model ignores it in v1). */
+  region?: ArenaRegion;
 }
 
 export interface ArenaState {
   nodes: ArenaNode[];
   edges: ArenaEdge[];
+  /** The modeled request rate (rps) — always `round(users / thinkTimeSec)` (103 AC1). */
   offeredLoad: number;
+  /** 103 — Little's Law drive: concurrent users … */
+  users: number;
+  /** … each sending one request every `thinkTimeSec` seconds. */
+  thinkTimeSec: number;
 }
 
 export const ARENA_STORAGE_KEY = "agentsim.arena";
-const DEFAULT_LOAD = 1000;
+const DEFAULT_THINK_SEC = 30;
+const DEFAULT_USERS = 30_000; // ÷ 30s think = the pre-103 default of 1000 rps
+const DEFAULT_LOAD = DEFAULT_USERS / DEFAULT_THINK_SEC;
 
 function isSize(v: unknown): v is InstanceSize {
   return typeof v === "string" && (INSTANCE_SIZES as readonly string[]).includes(v);
@@ -61,13 +77,29 @@ export function loadArena(): ArenaState {
           typeof parsed.offeredLoad === "number" && parsed.offeredLoad >= 0
             ? parsed.offeredLoad
             : DEFAULT_LOAD;
-        return { nodes, edges, offeredLoad };
+        const thinkTimeSec =
+          typeof parsed.thinkTimeSec === "number" && parsed.thinkTimeSec >= 1
+            ? parsed.thinkTimeSec
+            : DEFAULT_THINK_SEC;
+        // 103 migration — a pre-103 blob has no `users`: derive it from the stored
+        // rps so the modeled load is preserved exactly.
+        const users =
+          typeof parsed.users === "number" && parsed.users >= 0
+            ? parsed.users
+            : offeredLoad * thinkTimeSec;
+        return { nodes, edges, offeredLoad: rpsOf(users, thinkTimeSec), users, thinkTimeSec };
       }
     } catch {
       // fall through
     }
   }
-  return { nodes: [], edges: [], offeredLoad: DEFAULT_LOAD };
+  return {
+    nodes: [],
+    edges: [],
+    offeredLoad: DEFAULT_LOAD,
+    users: DEFAULT_USERS,
+    thinkTimeSec: DEFAULT_THINK_SEC,
+  };
 }
 
 function persist(state: ArenaState): void {
@@ -89,6 +121,12 @@ function nextId(kind: ArenaKind, existing: ArenaNode[]): string {
 
 interface ArenaStore extends ArenaState {
   addNode: (kind: ArenaKind, pos: { x: number; y: number }) => string;
+  /** 107 — the selected node (drives the scale panel + auto-wire). Transient. */
+  selectedId: string | null;
+  select: (id: string | null) => void;
+  /** 107 — palette drop: add + auto-wire from the selected node + select the
+   *  new node, so "select the gateway, drop 3 LLMs" wires itself. */
+  dropNode: (kind: ArenaKind, pos: { x: number; y: number }) => string;
   removeNode: (id: string) => void;
   /** Live position update during a drag — updates state only, does NOT persist. */
   dragNode: (id: string, pos: { x: number; y: number }) => void;
@@ -100,8 +138,15 @@ interface ArenaStore extends ArenaState {
   setReplicas: (id: string, replicas: number) => void;
   setHitRatio: (id: string, hitRatio: number) => void;
   setOfferedLoad: (offeredLoad: number) => void;
+  /** 103 — the Little's Law drive: either control recomputes offeredLoad. */
+  setUsers: (users: number) => void;
+  setThinkTime: (thinkTimeSec: number) => void;
+  /** 103 — calls this node receives per user request (ReAct fan-out; min 1). */
+  setCallsPerRequest: (id: string, calls: number) => void;
+  /** 106 — annotate a node's region (null clears; invalid codes ignored). */
+  setRegion: (id: string, region: string | null) => void;
   /** Replace the whole canvas with a design (e.g. an example preset) + persist. */
-  loadDesign: (design: ArenaState) => void;
+  loadDesign: (design: Pick<ArenaState, "nodes" | "edges" | "users" | "thinkTimeSec">) => void;
   /** The preset currently shown in the canvas (drives the Examples dropdown). Transient
    *  UI state — not persisted; cleared by any structural edit. */
   exampleId: string | null;
@@ -118,8 +163,8 @@ function commit(set: (s: Partial<ArenaState>) => void, next: ArenaState): void {
 export const useArena = create<ArenaStore>((set, get) => {
   const init = loadArena();
   const save = (patch: Partial<ArenaState>) => {
-    const { nodes, edges, offeredLoad } = { ...get(), ...patch };
-    commit(set, { nodes, edges, offeredLoad });
+    const { nodes, edges, offeredLoad, users, thinkTimeSec } = { ...get(), ...patch };
+    commit(set, { nodes, edges, offeredLoad, users, thinkTimeSec });
   };
   // Structural edits (nodes/edges/scaling) mean the canvas no longer equals a preset,
   // so they deselect the Examples dropdown. Load-slider + drag keep the selection.
@@ -130,6 +175,17 @@ export const useArena = create<ArenaStore>((set, get) => {
   return {
     ...init,
     exampleId: null,
+    selectedId: null,
+
+    select: (id) => set({ selectedId: id }),
+
+    dropNode: (kind, pos) => {
+      const from = get().selectedId;
+      const id = get().addNode(kind, pos);
+      if (from && get().nodes.some((n) => n.id === from)) get().connect(from, id);
+      set({ selectedId: id });
+      return id;
+    },
 
     addNode: (kind, pos) => {
       const id = nextId(kind, get().nodes);
@@ -146,11 +202,13 @@ export const useArena = create<ArenaStore>((set, get) => {
       return id;
     },
 
-    removeNode: (id) =>
+    removeNode: (id) => {
       saveStruct({
         nodes: get().nodes.filter((n) => n.id !== id),
         edges: get().edges.filter((e) => e.source !== id && e.target !== id),
-      }),
+      });
+      if (get().selectedId === id) set({ selectedId: null });
+    },
 
     // Mid-drag: mutate state only (avoid a localStorage write on every frame).
     dragNode: (id, pos) =>
@@ -185,16 +243,64 @@ export const useArena = create<ArenaStore>((set, get) => {
         ),
       }),
 
-    setOfferedLoad: (offeredLoad) => save({ offeredLoad: Math.max(0, Math.round(offeredLoad)) }),
+    // Kept for compat: setting raw rps back-computes users at the current think time.
+    setOfferedLoad: (offeredLoad) => {
+      const rps = Math.max(0, Math.round(offeredLoad));
+      save({ offeredLoad: rps, users: rps * get().thinkTimeSec });
+    },
+
+    setUsers: (users) => {
+      const u = Math.max(0, Math.round(users));
+      save({ users: u, offeredLoad: rpsOf(u, get().thinkTimeSec) });
+    },
+
+    setThinkTime: (thinkTimeSec) => {
+      const t = Math.max(1, Math.round(thinkTimeSec));
+      save({ thinkTimeSec: t, offeredLoad: rpsOf(get().users, t) });
+    },
+
+    setCallsPerRequest: (id, calls) =>
+      saveStruct({
+        nodes: get().nodes.map((n) =>
+          n.id === id ? { ...n, callsPerRequest: Math.max(1, Math.round(calls)) } : n,
+        ),
+      }),
+
+    setRegion: (id, region) => {
+      if (region !== null && !(ARENA_REGIONS as readonly string[]).includes(region)) return;
+      saveStruct({
+        nodes: get().nodes.map((n) => {
+          if (n.id !== id) return n;
+          if (region === null) {
+            const { region: _drop, ...rest } = n;
+            return rest;
+          }
+          return { ...n, region: region as ArenaRegion };
+        }),
+      });
+    },
 
     loadDesign: (design) =>
-      save({ nodes: design.nodes, edges: design.edges, offeredLoad: design.offeredLoad }),
+      save({
+        nodes: design.nodes,
+        edges: design.edges,
+        users: design.users,
+        thinkTimeSec: design.thinkTimeSec,
+        offeredLoad: rpsOf(design.users, design.thinkTimeSec),
+      }),
 
     loadExample: (id) => {
       const ex = EXAMPLES.find((e) => e.id === id);
       if (!ex) return;
       const d = ex.build();
-      commit(set, { nodes: d.nodes, edges: d.edges, offeredLoad: d.offeredLoad });
+      const { nodes, edges, users, thinkTimeSec } = d;
+      commit(set, {
+        nodes,
+        edges,
+        users,
+        thinkTimeSec,
+        offeredLoad: rpsOf(users, thinkTimeSec),
+      });
       set({ exampleId: id });
     },
 

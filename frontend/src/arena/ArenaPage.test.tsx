@@ -96,3 +96,12 @@ describe("Arena honesty banner (AC10)", () => {
     expect(screen.getByText(UI.en.arena.honesty)).toBeTruthy();
   });
 });
+
+describe("wiring gesture hints (107 AC5)", () => {
+  it("teaches auto-wire and edge deletion in the palette footer", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
+    expect(screen.getByText(UI.en.arena.autoWireHint)).toBeTruthy();
+    expect(screen.getByText(UI.en.arena.edgeHint)).toBeTruthy();
+  });
+});

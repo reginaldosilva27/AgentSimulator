@@ -1,21 +1,30 @@
-// 101-arena-examples — the preset scenario library + the first-visit default sample.
+// 101-arena-examples + 103-arena-realism — the preset scenario library.
 //
-// Each preset is a pure factory producing a complete `ArenaDesign` (placed nodes +
-// edges + offered load) with bilingual metadata. Data-driven so the library is easy
-// to extend. Node ids are literal and stable per preset (no counter needed). The
-// designs are tuned so they teach their lesson THROUGH the real capacity model
-// (examples.test.ts pins the simple-vs-scaled claim via computeMetrics).
+// Each preset is a pure factory producing a complete design (placed nodes + edges)
+// plus its LOAD STORY in Little's-Law terms: `users` concurrent users each sending
+// one request every `thinkTimeSec` seconds → offered rps = users / thinkTimeSec.
+// Framing the load in users (not raw rps) is what keeps the numbers defensible:
+// e.g. 100k concurrent users at 1 msg/min ≈ 1,667 req/s — servable by a realistic
+// LLM fleet — where "100k rps straight into an LLM" would be fantasy (Azure's PTU
+// sizing math puts ONE deployment at single-digit-to-tens of agent-shaped req/s).
+//
+// `callsPerRequest` models the agent fan-out (a ReAct turn makes 2–5 model calls;
+// tools/retrieval may be hit more than once per turn). Set it on the AI Gateway OR
+// on the LLM directly behind the backend — never both (double-count).
+//
+// The designs teach THROUGH the real capacity model — examples.test.ts pins the
+// simple-vs-scaled claim and the fleet's survival via computeMetrics.
 
 import type { Lang } from "../i18n";
 import { DEFAULT_HIT_RATIO } from "./components";
-import type { ArenaEdge } from "./model";
-import type { ArenaNode } from "./store";
+import { rpsOf, type ArenaEdge } from "./model";
+import type { ArenaNode, ArenaState } from "./store";
 
 export interface ArenaExample {
   id: string;
   title: Record<Lang, string>;
   description: Record<Lang, string>;
-  build: () => { nodes: ArenaNode[]; edges: ArenaEdge[]; offeredLoad: number };
+  build: () => Pick<ArenaState, "nodes" | "edges" | "users" | "thinkTimeSec">;
 }
 
 /** Terse node factory: kind + position + optional scaling overrides. */
@@ -42,15 +51,16 @@ export const EXAMPLES: ArenaExample[] = [
     id: "simple-rag",
     title: { en: "Simple RAG agent", pt: "Agente RAG simples" },
     description: {
-      en: "One of everything. Push the load up and watch the LLM saturate first — the classic agent wall.",
-      pt: "Um de cada. Aumente a carga e veja o LLM saturar primeiro — a parede clássica do agente.",
+      en: "6k users, 1 msg/20s (≈300 req/s). Each turn makes 2 LLM calls — one deployment saturates instantly: the agent's wall.",
+      pt: "6 mil usuários, 1 msg/20s (≈300 req/s). Cada turno faz 2 chamadas de LLM — um deployment satura na hora: a parede do agente.",
     },
     build: () => ({
-      offeredLoad: 300,
+      users: 6_000,
+      thinkTimeSec: 20,
       nodes: [
         node("client", "client", 0, ROW),
         node("backend", "backend", COL, ROW),
-        node("llm", "llm", COL * 2, 0),
+        node("llm", "llm", COL * 2, 0, { callsPerRequest: 2 }),
         node("vectorDb", "vectorDb", COL * 2, ROW * 2),
       ],
       edges: [edge("client", "backend"), edge("backend", "llm"), edge("backend", "vectorDb")],
@@ -60,49 +70,70 @@ export const EXAMPLES: ArenaExample[] = [
     id: "scale-llm",
     title: { en: "Scale the LLM", pt: "Escalar o LLM" },
     description: {
-      en: "Same load, but the LLM runs many replicas behind a load balancer — the bottleneck clears.",
-      pt: "Mesma carga, mas o LLM roda várias réplicas atrás de um load balancer — o gargalo some.",
+      en: "Same 300 req/s, but the LLM runs 20 deployments (replicas) — the bottleneck clears. Horizontal scale is the lever.",
+      pt: "Os mesmos 300 req/s, mas o LLM roda 20 deployments (réplicas) — o gargalo some. Escala horizontal é a alavanca.",
     },
     build: () => ({
-      offeredLoad: 300,
+      users: 6_000,
+      thinkTimeSec: 20,
       nodes: [
         node("client", "client", 0, ROW),
-        node("lb", "loadBalancer", COL, ROW),
-        node("backend", "backend", COL * 2, ROW),
-        node("llm", "llm", COL * 3, 0, { replicas: 10 }),
-        node("vectorDb", "vectorDb", COL * 3, ROW * 2),
+        node("backend", "backend", COL, ROW),
+        node("llm", "llm", COL * 2, 0, { callsPerRequest: 2, replicas: 20 }),
+        node("vectorDb", "vectorDb", COL * 2, ROW * 2),
       ],
-      edges: [
-        edge("client", "lb"),
-        edge("lb", "backend"),
-        edge("backend", "llm"),
-        edge("backend", "vectorDb"),
-      ],
+      edges: [edge("client", "backend"), edge("backend", "llm"), edge("backend", "vectorDb")],
     }),
   },
   {
     id: "rag-cache",
     title: { en: "RAG with a cache", pt: "RAG com cache" },
     description: {
-      en: "A cache in front of the vector DB serves repeat reads, so only misses hit the store.",
-      pt: "Um cache na frente do vector DB serve leituras repetidas — só as falhas vão ao banco.",
+      en: "An API gateway fronts the POST path (a CDN would bypass it) and a cache serves repeat retrievals — only misses reach the vector DB.",
+      pt: "Um API gateway na frente do caminho POST (um CDN daria bypass) e um cache serve leituras repetidas — só as falhas chegam ao vector DB.",
     },
     build: () => ({
-      offeredLoad: 200,
+      users: 4_000,
+      thinkTimeSec: 20,
       nodes: [
         node("client", "client", 0, ROW),
-        node("cdn", "cdn", COL, ROW),
+        node("apigw", "apiGateway", COL, ROW),
         node("backend", "backend", COL * 2, ROW),
-        node("llm", "llm", COL * 3, 0, { replicas: 6 }),
+        node("llm", "llm", COL * 3, 0, { callsPerRequest: 2, replicas: 12 }),
         node("cache", "cache", COL * 3, ROW * 2, { hitRatio: DEFAULT_HIT_RATIO }),
         node("vectorDb", "vectorDb", COL * 4, ROW * 2),
       ],
       edges: [
-        edge("client", "cdn"),
-        edge("cdn", "backend"),
+        edge("client", "apigw"),
+        edge("apigw", "backend"),
         edge("backend", "llm"),
         edge("backend", "cache"),
         edge("cache", "vectorDb"),
+      ],
+    }),
+  },
+  {
+    id: "agent-tools",
+    title: { en: "Agent with tools", pt: "Agente com tools" },
+    description: {
+      en: "The ReAct loop multiplies internal traffic: 100 user req/s become 300 LLM calls and 200 tool calls per second.",
+      pt: "O loop ReAct multiplica o tráfego interno: 100 req/s de usuários viram 300 chamadas de LLM e 200 de tools por segundo.",
+    },
+    build: () => ({
+      users: 2_000,
+      thinkTimeSec: 20,
+      nodes: [
+        node("client", "client", 0, ROW),
+        node("backend", "backend", COL, ROW),
+        node("llm", "llm", COL * 2, 0, { callsPerRequest: 3, replicas: 10 }),
+        node("mcp", "mcp", COL * 2, ROW * 1.4, { callsPerRequest: 2 }),
+        node("vectorDb", "vectorDb", COL * 2, ROW * 2.6, { callsPerRequest: 2 }),
+      ],
+      edges: [
+        edge("client", "backend"),
+        edge("backend", "llm"),
+        edge("backend", "mcp"),
+        edge("backend", "vectorDb"),
       ],
     }),
   },
@@ -110,25 +141,32 @@ export const EXAMPLES: ArenaExample[] = [
     id: "prod",
     title: { en: "Production shape", pt: "Formato de produção" },
     description: {
-      en: "The full ingress-to-agent path: gateway, load balancer, replicated backend + LLM, cache and vector DB.",
-      pt: "O caminho completo da borda ao agente: gateway, load balancer, backend + LLM replicados, cache e vector DB.",
+      en: "12k users (≈600 req/s) through gateway + LB, replicated backend, an AI Gateway routing 2 LLM pools, cache + vector DB.",
+      pt: "12 mil usuários (≈600 req/s) por gateway + LB, backend replicado, AI Gateway roteando 2 pools de LLM, cache + vector DB.",
     },
     build: () => ({
-      offeredLoad: 600,
+      users: 12_000,
+      thinkTimeSec: 20,
       nodes: [
         node("client", "client", 0, ROW),
         node("apigw", "apiGateway", COL, ROW),
         node("lb", "loadBalancer", COL * 2, ROW),
         node("backend", "backend", COL * 3, ROW, { replicas: 2 }),
-        node("llm", "llm", COL * 4, 0, { replicas: 20 }),
+        node("aigw", "aiGateway", COL * 4, ROW * 0.4, { callsPerRequest: 2 }),
+        // Two POOLS in different regions (106) — same capacity as one box ×20;
+        // the split is resilience/latency intent, which the gateway routes across.
+        node("llm1", "llm", COL * 5, 0, { size: "large", replicas: 10, region: "us-east" }),
+        node("llm2", "llm", COL * 5, ROW, { size: "large", replicas: 10, region: "eu-west" }),
         node("cache", "cache", COL * 4, ROW * 2, { hitRatio: DEFAULT_HIT_RATIO }),
-        node("vectorDb", "vectorDb", COL * 5, ROW * 2),
+        node("vectorDb", "vectorDb", COL * 5, ROW * 2.4),
       ],
       edges: [
         edge("client", "apigw"),
         edge("apigw", "lb"),
         edge("lb", "backend"),
-        edge("backend", "llm"),
+        edge("backend", "aigw"),
+        edge("aigw", "llm1"),
+        edge("aigw", "llm2"),
         edge("backend", "cache"),
         edge("cache", "vectorDb"),
       ],
@@ -136,22 +174,23 @@ export const EXAMPLES: ArenaExample[] = [
   },
   {
     id: "llm-fleet",
-    title: { en: "LLM fleet at 10k", pt: "Frota de LLMs a 10k" },
+    title: { en: "100k users", pt: "100 mil usuários" },
     description: {
-      en: "What it takes to serve ~10k rps: a replicated backend + an AI Gateway routing across a fleet of LLM deployments (capacity adds up) + cache + DB replicas.",
-      pt: "O que é preciso pra servir ~10k rps: backend replicado + um AI Gateway roteando entre uma frota de deployments de LLM (a capacidade soma) + cache + réplicas de banco.",
+      en: "100k concurrent users at 1 msg/min ≈ 1,667 req/s (Little's Law). An AI Gateway spreads ~3,300 LLM calls/s across a fleet of 4 pools × 6 XLarge deployments.",
+      pt: "100 mil usuários simultâneos a 1 msg/min ≈ 1.667 req/s (Lei de Little). Um AI Gateway espalha ~3.300 chamadas de LLM/s por uma frota de 4 pools × 6 deployments XLarge.",
     },
     build: () => ({
-      offeredLoad: 10_000,
+      users: 100_000,
+      thinkTimeSec: 60,
       nodes: [
         node("client", "client", 0, ROW * 1.5),
         node("backend", "backend", COL, ROW * 1.5, { replicas: 3 }),
-        node("aigw", "aiGateway", COL * 2, ROW * 1.5),
-        // A fleet of LLM deployments behind the gateway — XLarge ×20 ≈ 4000 rps each.
-        node("llm1", "llm", COL * 3, 0, { size: "xlarge", replicas: 20 }),
-        node("llm2", "llm", COL * 3, ROW, { size: "xlarge", replicas: 20 }),
-        node("llm3", "llm", COL * 3, ROW * 2, { size: "xlarge", replicas: 20 }),
-        node("llm4", "llm", COL * 3, ROW * 3, { size: "xlarge", replicas: 20 }),
+        node("aigw", "aiGateway", COL * 2, ROW * 1.5, { callsPerRequest: 2 }),
+        // Four POOLS across four regions (106) — the fleet the gateway routes.
+        node("llm1", "llm", COL * 3, 0, { size: "xlarge", replicas: 6, region: "us-east" }),
+        node("llm2", "llm", COL * 3, ROW, { size: "xlarge", replicas: 6, region: "us-west" }),
+        node("llm3", "llm", COL * 3, ROW * 2, { size: "xlarge", replicas: 6, region: "eu-west" }),
+        node("llm4", "llm", COL * 3, ROW * 3, { size: "xlarge", replicas: 6, region: "sa-east" }),
         node("cache", "cache", COL * 2, ROW * 3.2, { hitRatio: DEFAULT_HIT_RATIO }),
         node("vectorDb", "vectorDb", COL * 3, ROW * 4.2, { replicas: 2 }),
       ],
@@ -172,7 +211,8 @@ export const EXAMPLES: ArenaExample[] = [
 /** The sample loaded on a first visit (empty localStorage). */
 export const DEFAULT_EXAMPLE_ID = "simple-rag";
 
-export function defaultDesign(): { nodes: ArenaNode[]; edges: ArenaEdge[]; offeredLoad: number } {
+export function defaultDesign(): ArenaState {
   const ex = EXAMPLES.find((e) => e.id === DEFAULT_EXAMPLE_ID) ?? EXAMPLES[0];
-  return ex.build();
+  const d = ex.build();
+  return { ...d, offeredLoad: rpsOf(d.users, d.thinkTimeSec) };
 }
