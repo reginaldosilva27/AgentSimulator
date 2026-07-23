@@ -12,7 +12,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // Files/dirs that are pure projection of the visual model and must be themed.
-const SCAN_ROOTS = ["src/components", "src/learn", "src/App.tsx", "src/lib/stations.ts"];
+const SCAN_ROOTS = ["src/components", "src/learn", "src/arena", "src/App.tsx", "src/lib/stations.ts"];
 
 const HEX = /#[0-9a-fA-F]{3,8}\b/g;
 

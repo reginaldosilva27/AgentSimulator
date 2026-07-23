@@ -35,6 +35,7 @@ import { ScenarioBuilder } from "./components/ScenarioBuilder";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { Timeline } from "./components/Timeline";
 import { TourCaption } from "./components/TourCaption";
+import { ArenaPage } from "./arena/ArenaPage";
 import { useT } from "./i18n";
 import { LearnPage } from "./learn/LearnPage";
 import { pendingBubble } from "./lib/chatStatus";
@@ -60,6 +61,18 @@ function GitHubIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden>
       <path d="M12 1.5a10.5 10.5 0 0 0-3.32 20.47c.52.1.71-.23.71-.5v-1.76c-2.92.64-3.54-1.4-3.54-1.4-.48-1.22-1.16-1.54-1.16-1.54-.95-.65.07-.64.07-.64 1.05.07 1.6 1.08 1.6 1.08.94 1.6 2.45 1.14 3.05.87.1-.68.37-1.14.66-1.4-2.33-.27-4.78-1.17-4.78-5.18 0-1.15.41-2.08 1.08-2.81-.11-.27-.47-1.34.1-2.79 0 0 .88-.28 2.88 1.07a9.96 9.96 0 0 1 5.24 0c2-1.35 2.88-1.07 2.88-1.07.57 1.45.21 2.52.1 2.79.67.73 1.08 1.66 1.08 2.81 0 4.02-2.45 4.9-4.79 5.16.38.33.71.97.71 1.96v2.9c0 .28.19.61.72.5A10.5 10.5 0 0 0 12 1.5z" />
+    </svg>
+  );
+}
+
+// 100-arena-capacity-sandbox — the Arena nav glyph (stacked architecture blocks).
+function ArenaIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="8.5" y="14" width="7" height="7" rx="1.5" />
+      <path d="M6.5 10v2.5h11V10M12 12.5V14" strokeLinecap="round" />
     </svg>
   );
 }
@@ -307,6 +320,25 @@ export default function App() {
         <Divider />
 
         {/* Navigation + status. */}
+        {/* 100-arena-capacity-sandbox — the Arena toggle sits beside Learn (same
+            mutual-exclusion pattern: from any page it opens Arena, and from
+            Arena it returns to the Simulator). */}
+        <button
+          onClick={() => setPage(page === "arena" ? "sim" : "arena")}
+          aria-pressed={page === "arena"}
+          className="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-[12px] font-medium transition hover:border-[var(--color-sky)] hover:text-[var(--color-sky-soft)]"
+          style={{
+            borderColor: page === "arena" ? "var(--color-sky)" : "var(--color-line)",
+            color: page === "arena" ? "var(--color-sky-soft)" : "var(--color-text-soft)",
+          }}
+        >
+          {page === "arena" ? (
+            <BackIcon className="h-3.5 w-3.5" />
+          ) : (
+            <ArenaIcon className="h-3.5 w-3.5" />
+          )}
+          <span className="hidden lg:inline">{page === "arena" ? t.app.simulator : t.arena.nav}</span>
+        </button>
         {/* Learn ↔ Sim toggle. 041-settings-page tightens this: clicking from
             `settings` jumps straight to `learn` (mutual exclusion), not back
             to sim. Symmetric for ConfigToggle. */}
@@ -373,6 +405,8 @@ export default function App() {
 
       {page === "settings" ? (
         <SettingsPage />
+      ) : page === "arena" ? (
+        <ArenaPage />
       ) : page === "learn" ? (
         <LearnPage />
       ) : mobileDemo ? (

@@ -1,0 +1,63 @@
+// 100-arena-capacity-sandbox — end-to-end verification of the REAL ArenaCanvas
+// (React Flow) wired to the store + model, which the AC8/AC10 test stubs out.
+// Seeds a design in the store and asserts the live node boxes render their
+// modeled metrics and that the saturated LLM lights up as the bottleneck.
+
+import { cleanup, render, screen } from "@testing-library/react";
+import { ReactFlowProvider } from "@xyflow/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ArenaCanvas } from "./ArenaCanvas";
+import { BENCHMARKS } from "./components";
+import { useArena } from "./store";
+
+beforeEach(() => {
+  if (typeof ResizeObserver === "undefined") {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  }
+  // A backend → llm → appDb chain under load that saturates the llm.
+  useArena.setState({
+    nodes: [
+      { id: "backend-1", kind: "backend", size: "medium", replicas: 1, x: 0, y: 0 },
+      { id: "llm-2", kind: "llm", size: "medium", replicas: 1, x: 220, y: 0 },
+      { id: "appDb-3", kind: "appDb", size: "medium", replicas: 1, x: 440, y: 0 },
+    ],
+    edges: [
+      { id: "backend-1-llm-2", source: "backend-1", target: "llm-2" },
+      { id: "llm-2-appDb-3", source: "llm-2", target: "appDb-3" },
+    ],
+    offeredLoad: BENCHMARKS.backend.baseCapacity, // saturates the llm hard
+  });
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("ArenaCanvas real render (integration)", () => {
+  it("renders a node box per component with live QPS + a bottleneck flag on the LLM", () => {
+    render(
+      <ReactFlowProvider>
+        <ArenaCanvas />
+      </ReactFlowProvider>,
+    );
+
+    // All three component boxes are on the canvas (labels come from KIND_META).
+    expect(screen.getByText("Backend")).toBeTruthy();
+    expect(screen.getByText("LLM")).toBeTruthy();
+    expect(screen.getByText("App DB")).toBeTruthy();
+
+    // The QPS metric label appears (proof the metrics grid rendered), and the
+    // over-loaded LLM shows the bottleneck badge — the real model → node path.
+    expect(screen.getAllByText("QPS").length).toBeGreaterThan(0);
+    expect(screen.getByText(/bottleneck/i)).toBeTruthy();
+  });
+});

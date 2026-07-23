@@ -71,6 +71,33 @@ export interface Strings {
     offline: string;
     noKey: string;
   };
+  // 100-arena-capacity-sandbox — the separate "Arena" page (capacity sandbox).
+  // Kept type-independent of arena/* to avoid an i18n ↔ arena import cycle:
+  // component KIND labels live localized in arena/components.ts (KIND_META).
+  arena: {
+    nav: string; // header button label (beside Learn)
+    title: string;
+    tagline: string;
+    honesty: string; // the §3 "this is a model, not a live load test" banner
+    paletteTitle: string;
+    paletteHint: string;
+    examples: string; // 101 — the "load an example scenario" menu label
+    emptyCanvas: string;
+    load: string;
+    loadHint: string;
+    reset: string;
+    scaling: string; // the selected-node scaling panel heading
+    metric: { qps: string; latency: string; util: string; capacity: string };
+    status: { healthy: string; warning: string; critical: string; unreachable: string };
+    size: string;
+    replicas: string;
+    sizes: { small: string; medium: string; large: string; xlarge: string };
+    cacheHitRatio: string;
+    bottleneck: string;
+    selectHint: string;
+    remove: string;
+    users: (n: number) => string; // the offered-load readout ("≈ N users / rps")
+  };
   // 058-online-demo-mode: the backend-less GitHub Pages showcase build.
   demo: {
     bannerLead: string;
@@ -1238,6 +1265,36 @@ const en: Strings = {
       "Backend offline — start it with `docker compose up backend` (it needs OPENAI_API_KEY in backend/.env).",
     noKey:
       "No OPENAI_API_KEY set — the backend is up but can't run a turn. Add it to backend/.env and restart.",
+  },
+  arena: {
+    nav: "Arena",
+    title: "Arena",
+    tagline: "Model your architecture under load",
+    honesty:
+      "Estimated model — not a live load test. The numbers are analytical, derived from stated per-component benchmarks; no real traffic is sent.",
+    paletteTitle: "Components",
+    paletteHint: "Drag onto the canvas to add",
+    examples: "Examples",
+    emptyCanvas: "Drag a component here to start building",
+    load: "Users / RPS",
+    loadHint: "Offered load driving the model",
+    reset: "Reset canvas",
+    scaling: "Scaling",
+    metric: { qps: "QPS", latency: "Latency", util: "Utilization", capacity: "Capacity" },
+    status: {
+      healthy: "Healthy",
+      warning: "Warning",
+      critical: "Critical",
+      unreachable: "Unreachable",
+    },
+    size: "Instance size",
+    replicas: "Replicas",
+    sizes: { small: "Small", medium: "Medium", large: "Large", xlarge: "XLarge" },
+    cacheHitRatio: "Cache hit ratio",
+    bottleneck: "Bottleneck",
+    selectHint: "Select a component to scale it",
+    remove: "Remove",
+    users: (n) => `≈ ${n.toLocaleString("en-US")} req/s`,
   },
   demo: {
     bannerLead: "Demo mode — sample questions only, replaying real captured runs.",
@@ -2523,6 +2580,36 @@ const pt: Strings = {
       "Backend offline — suba com `docker compose up backend` (precisa de OPENAI_API_KEY em backend/.env).",
     noKey:
       "Sem OPENAI_API_KEY — o backend está no ar mas não roda um turno. Adicione em backend/.env e reinicie.",
+  },
+  arena: {
+    nav: "Arena",
+    title: "Arena",
+    tagline: "Modele sua arquitetura sob carga",
+    honesty:
+      "Modelo estimado — não é teste de carga real. Os números são analíticos, a partir de benchmarks declarados por componente; nenhum tráfego real é enviado.",
+    paletteTitle: "Componentes",
+    paletteHint: "Arraste para o canvas para adicionar",
+    examples: "Exemplos",
+    emptyCanvas: "Arraste um componente aqui para começar a montar",
+    load: "Usuários / RPS",
+    loadHint: "Carga oferecida que alimenta o modelo",
+    reset: "Limpar canvas",
+    scaling: "Escala",
+    metric: { qps: "QPS", latency: "Latência", util: "Utilização", capacity: "Capacidade" },
+    status: {
+      healthy: "Saudável",
+      warning: "Alerta",
+      critical: "Crítico",
+      unreachable: "Inalcançável",
+    },
+    size: "Tamanho da instância",
+    replicas: "Réplicas",
+    sizes: { small: "Pequeno", medium: "Médio", large: "Grande", xlarge: "Extra grande" },
+    cacheHitRatio: "Taxa de acerto do cache",
+    bottleneck: "Gargalo",
+    selectHint: "Selecione um componente para escalá-lo",
+    remove: "Remover",
+    users: (n) => `≈ ${n.toLocaleString("pt-BR")} req/s`,
   },
   demo: {
     bannerLead: "Modo demo — apenas perguntas de exemplo, reproduzindo execuções reais capturadas.",
