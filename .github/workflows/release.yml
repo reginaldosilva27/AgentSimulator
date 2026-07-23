@@ -20,7 +20,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # --generate-notes monta o changelog a partir dos commits/PRs desde a
         # última tag. Tags pré-release (v1.0.0-beta.1, -rc.1) são marcadas como tal.
+        #
+        # Idempotente: se a release já existe (ex.: foi criada à mão com notas
+        # curadas via `gh release create --notes-file` antes do push da tag), o
+        # job pula em vez de falhar com "Release.tag_name already exists" (422).
         run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} já existe — nada a fazer."
+            exit 0
+          fi
           PRERELEASE=""
           case "${GITHUB_REF_NAME}" in
             *-*) PRERELEASE="--prerelease" ;;
