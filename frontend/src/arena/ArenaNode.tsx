@@ -7,7 +7,6 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useT } from "../i18n";
 import { formatLatency, formatQps } from "./format";
 import type { NodeStatus } from "./model";
-import { useArena } from "./store";
 
 export interface ArenaNodeData extends Record<string, unknown> {
   label: string;
@@ -28,10 +27,15 @@ export interface ArenaNodeData extends Record<string, unknown> {
   budget?: number | null;
   /** 118 — held > budget: the connection wall (independent of QPS utilization). */
   connectionWall?: boolean;
-  /** 119 — the loaded sample's explanation bubble for THIS node (resolved lang). */
-  callout?: string;
+  /** 122 — lit while the pointer is on this node's entry in the example-notes
+   *  panel (the spatial link the old anchored bubbles used to carry). */
+  highlight?: boolean;
   /** 120 — the user's own note on this box (shows a 📝 marker + tooltip). */
   note?: string;
+  /** 123 — the agent harness's turn fan-out (LLM calls/turn), shown as a badge so
+   *  the model's elevated QPS + the multiplied e2e latency read as an agent trait.
+   *  Only set for the harness node; `null` when it has no model child wired yet. */
+  fanOut?: number | null;
 }
 
 const STATUS_COLOR: Record<NodeStatus, string> = {
@@ -41,7 +45,7 @@ const STATUS_COLOR: Record<NodeStatus, string> = {
   unreachable: "var(--color-muted)",
 };
 
-export function ArenaNode({ data, selected }: NodeProps) {
+export function ArenaNode({ id, data, selected }: NodeProps) {
   const t = useT();
   const d = data as ArenaNodeData;
   const color = STATUS_COLOR[d.status];
@@ -50,34 +54,20 @@ export function ArenaNode({ data, selected }: NodeProps) {
   return (
     <div
       className="relative min-w-[150px] rounded-xl border bg-[var(--color-panel)] px-3 py-2 text-[var(--color-ink)] shadow-sm transition"
+      data-highlighted={d.highlight ? id : undefined}
       style={{
         borderColor: d.bottleneck
           ? "var(--color-rose)"
-          : selected
+          : selected || d.highlight
             ? "var(--color-sky)"
             : "var(--color-line)",
-        boxShadow: d.bottleneck ? "0 0 0 2px color-mix(in srgb, var(--color-rose) 45%, transparent)" : undefined,
+        boxShadow: d.bottleneck
+          ? "0 0 0 2px color-mix(in srgb, var(--color-rose) 45%, transparent)"
+          : d.highlight
+            ? "0 0 0 2px color-mix(in srgb, var(--color-sky) 45%, transparent)"
+            : undefined,
       }}
     >
-      {/* 119 — the loaded sample's explanation bubble, anchored above the box
-          (it moves with drags for free). ✕ hides ALL bubbles for this sample. */}
-      {d.callout && (
-        <div className="absolute -top-2 left-1/2 w-56 -translate-x-1/2 -translate-y-full rounded-lg border border-[var(--color-sky)] bg-[var(--color-panel)] p-2 pr-6 text-[9.5px] leading-snug text-[var(--color-text-soft)] shadow-md">
-          <button
-            aria-label={t.arena.calloutHide}
-            title={t.arena.calloutHide}
-            onClick={(ev) => {
-              ev.stopPropagation();
-              useArena.getState().hideCallouts();
-            }}
-            className="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded text-[9px] text-[var(--color-muted)] transition hover:text-[var(--color-ink)]"
-          >
-            ✕
-          </button>
-          {d.callout}
-        </div>
-      )}
-
       {/* 107 — wiring is the core gesture: handles are enlarged (14px + ring)
           and grow on hover so grabbing a connection is forgiving. */}
       <Handle
@@ -108,6 +98,16 @@ export function ArenaNode({ data, selected }: NodeProps) {
           />
         </div>
       </div>
+
+      {/* 123 — the harness's turn fan-out, in words: the honest source of the
+          LLM's elevated QPS and the multiplied end-to-end latency. */}
+      {d.fanOut != null && (
+        <div className="mt-0.5">
+          <span className="inline-block rounded bg-[color-mix(in_srgb,var(--color-sky)_15%,transparent)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--color-sky-soft)]">
+            {t.arena.fanoutTurn(d.fanOut)}
+          </span>
+        </div>
+      )}
 
       {(d.replicas > 1 || d.region) && (
         <div className="mt-0.5 flex flex-wrap gap-1">

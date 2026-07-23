@@ -140,8 +140,11 @@ export interface Strings {
     region: string;
     regionHint: string;
     regionNone: string;
-    // 119 — the ✕ aria-label on an example's explanation bubbles.
+    // 119/122 — the loaded example's notes panel: title + the ✕ that hides it.
+    calloutsTitle: string;
     calloutHide: string;
+    // 124 — the tidy button in the canvas controls.
+    autoArrange: string;
     // 107 — wiring gestures taught in the palette footer.
     connectHint: string;
     edgeHint: string;
@@ -149,6 +152,8 @@ export interface Strings {
     fanoutNudge: string;
     fanoutApply: string;
     fanoutDismiss: string;
+    // 123 — the agent-harness fan-out badge ("ReAct loop · N LLM calls/turn").
+    fanoutTurn: (calls: number) => string;
     replicasCeilingHint: string;
     sizes: { small: string; medium: string; large: string; xlarge: string };
     cacheHitRatio: string;
@@ -1405,12 +1410,15 @@ const en: Strings = {
     regionHint:
       "Pools in different regions survive a region outage, cut latency near users and meet data residency. An annotation for now — challenges will score it.",
     regionNone: "No region",
+    calloutsTitle: "Example notes",
     calloutHide: "Hide explanations",
+    autoArrange: "Auto-arrange boxes",
     connectHint: "Tip: drag from a node's round handle to another node to connect them",
     edgeHint: "Click a link and press Backspace to remove it",
     fanoutNudge: "An agent turn makes 2–5 model calls — set calls per request = 2?",
     fanoutApply: "Set to 2",
     fanoutDismiss: "Keep 1",
+    fanoutTurn: (calls: number) => `ReAct loop · ${calls} LLM calls/turn`,
     replicasCeilingHint:
       "At the per-pool max — real fleets escape by adding another pool/region or a higher quota tier.",
     sizes: { small: "Small", medium: "Medium", large: "Large", xlarge: "XLarge" },
@@ -2785,12 +2793,15 @@ const pt: Strings = {
     regionHint:
       "Pools em regiões diferentes sobrevivem à queda de uma região, reduzem a latência perto dos usuários e atendem residência de dados. Por ora é uma anotação — os desafios vão pontuar isso.",
     regionNone: "Sem região",
+    calloutsTitle: "Notas do exemplo",
     calloutHide: "Ocultar explicações",
+    autoArrange: "Reorganizar caixas",
     connectHint: "Dica: arraste do conector redondo de um nó até outro nó para ligá-los",
     edgeHint: "Clique numa ligação e pressione Backspace para removê-la",
     fanoutNudge: "Um turno de agente faz de 2 a 5 chamadas de modelo — definir chamadas por request = 2?",
     fanoutApply: "Definir como 2",
     fanoutDismiss: "Manter 1",
+    fanoutTurn: (calls: number) => `loop ReAct · ${calls} chamadas LLM/turno`,
     replicasCeilingHint:
       "No máximo por pool — frotas reais escapam adicionando outro pool/região ou um tier de cota maior.",
     sizes: { small: "Pequeno", medium: "Médio", large: "Grande", xlarge: "Extra grande" },

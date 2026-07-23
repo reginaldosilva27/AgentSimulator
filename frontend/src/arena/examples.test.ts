@@ -52,6 +52,31 @@ describe("arena example library (101 AC3, AC6)", () => {
   });
 });
 
+describe("123 — every preset is fronted by the agent harness", () => {
+  it("wires exactly one agentHarness between the backend and its callees", () => {
+    for (const ex of EXAMPLES) {
+      const d = ex.build();
+      const harnesses = d.nodes.filter((n) => n.kind === "agentHarness");
+      expect(harnesses, `${ex.id} has one harness`).toHaveLength(1);
+      const h = harnesses[0];
+      const backend = d.nodes.find((n) => n.kind === "backend")!;
+      // backend → harness, and the harness (not the backend) now feeds the callees.
+      expect(
+        d.edges.some((e) => e.source === backend.id && e.target === h.id),
+        `${ex.id} backend→harness`,
+      ).toBe(true);
+      expect(
+        d.edges.some((e) => e.source === backend.id && e.target !== h.id),
+        `${ex.id} backend fans out ONLY to the harness`,
+      ).toBe(false);
+      expect(
+        d.edges.some((e) => e.source === h.id),
+        `${ex.id} harness feeds the callees`,
+      ).toBe(true);
+    }
+  });
+});
+
 describe("presets teach their lesson through the model (101 AC5)", () => {
   const llmStatus = (id: string) => {
     const d = byId(id).build();

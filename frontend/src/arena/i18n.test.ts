@@ -85,11 +85,14 @@ describe("scaling vocabulary + info explainers (104 AC1/AC6)", () => {
     }
   });
 
-  it("gives every scalable kind a bilingual unit + size meaning; client is not scalable", () => {
+  it("gives every scalable kind a bilingual unit + size meaning; the non-scalable kinds have none", () => {
     expect(KIND_META.client.scaling).toBeNull(); // the load source has no knobs
+    // 123 — the agent harness runs in the backend process: also non-scalable.
+    expect(KIND_META.agentHarness.scaling).toBeNull();
+    const NON_SCALABLE = new Set(["client", "agentHarness"]);
     for (const kind of PALETTE_ORDER) {
       const s = KIND_META[kind].scaling;
-      if (kind === "client") continue;
+      if (NON_SCALABLE.has(kind)) continue;
       expect(s, `${kind} scaling`).not.toBeNull();
       expect(s!.unit.en.trim(), `${kind} unit.en`).toBeTruthy();
       expect(s!.unit.pt.trim(), `${kind} unit.pt`).toBeTruthy();
@@ -101,5 +104,32 @@ describe("scaling vocabulary + info explainers (104 AC1/AC6)", () => {
   it("labels the LLM's horizontal unit as deployments (not containers)", () => {
     expect(KIND_META.llm.scaling!.unit.en).toMatch(/deployment/i);
     expect(KIND_META.llm.scaling!.unit.pt).toMatch(/deployment/i);
+  });
+});
+
+describe("123 — agent harness strings (AC3, AC5, §4)", () => {
+  it("has a bilingual label, description and non-scalable info explainer", () => {
+    const m = KIND_META.agentHarness;
+    expect(m.label.en).toBe("Agent Harness");
+    expect(m.label.pt.trim()).toBeTruthy();
+    expect(m.description.en.trim()).toBeTruthy();
+    expect(m.description.pt.trim()).toBeTruthy();
+    // AC5 — the info states it runs in the backend and is not scaled on its own.
+    expect(m.info.en).toMatch(/in-process|backend/i);
+    expect(m.info.pt).toMatch(/in-process|backend/i);
+  });
+
+  it("builds the fan-out badge with the call count in both languages (AC3)", () => {
+    expect(UI.en.arena.fanoutTurn(2)).toContain("2");
+    expect(UI.pt.arena.fanoutTurn(2)).toContain("2");
+    expect(UI.en.arena.fanoutTurn(2)).toMatch(/ReAct/);
+    expect(UI.pt.arena.fanoutTurn(2)).toMatch(/ReAct/);
+  });
+
+  it("fills the cloud map for the new kind (§5)", () => {
+    const c = KIND_META.agentHarness.clouds;
+    expect(c.azure.trim()).toBeTruthy();
+    expect(c.aws.trim()).toBeTruthy();
+    expect(c.gcp.trim()).toBeTruthy();
   });
 });

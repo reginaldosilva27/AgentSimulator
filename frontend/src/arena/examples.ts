@@ -56,7 +56,7 @@ const edge = (source: string, target: string): ArenaEdge => ({
 const COL = 210; // horizontal spacing between tiers
 const ROW = 150; // vertical spacing between branches
 
-export const EXAMPLES: ArenaExample[] = [
+const RAW_EXAMPLES: ArenaExample[] = [
   {
     id: "simple-rag",
     claims: { demandRps: 800, llm: "critical" },
@@ -85,6 +85,16 @@ export const EXAMPLES: ArenaExample[] = [
         text: {
           en: "Retrieval is cheap next to the model: the vector DB idles while the LLM chokes. Scaling THIS box would fix nothing.",
           pt: "A recuperação é barata perto do modelo: o vector DB fica ocioso enquanto o LLM engasga. Escalar ESTA caixa não resolveria nada.",
+        },
+      },
+      {
+        // 123 — the harness is why the LLM QPS and the e2e latency are multiplied:
+        // one user turn is N model calls. It runs in the backend, so it never
+        // saturates itself — it makes the fan-out legible.
+        nodeId: "harness",
+        text: {
+          en: "The agent loop runs IN the backend — not a tier you scale. It's here to show the fan-out: one user turn becomes 2 model calls, which is why the LLM QPS and the end-to-end latency read doubled.",
+          pt: "O loop do agente roda NO backend — não é um tier que você escala. Está aqui para mostrar o fan-out: um turno de usuário vira 2 chamadas ao modelo, e é por isso que o QPS do LLM e a latência ponta-a-ponta aparecem dobrados.",
         },
       },
     ],
@@ -501,6 +511,47 @@ export const EXAMPLES: ArenaExample[] = [
     }),
   },
 ];
+
+/**
+ * 123 — insert the Agent Harness between the backend and everything it calls:
+ * reparent every `backend → X` edge to `harness → X`, add `backend → harness`,
+ * and shift the boxes to the backend's right by one column so the new box has
+ * room. Design A (display-only): the harness is latency-0 / capacity-∞ and lives
+ * in the backend's region, so EVERY reported number stays identical — this is a
+ * pure legibility overlay applied uniformly to the whole preset library.
+ */
+function withHarness(
+  d: Pick<ArenaState, "nodes" | "edges" | "users" | "thinkTimeSec">,
+): Pick<ArenaState, "nodes" | "edges" | "users" | "thinkTimeSec"> {
+  const backend = d.nodes.find((n) => n.kind === "backend");
+  if (!backend) return d; // no agent tier → nothing to front (defensive)
+  const HARNESS_ID = "harness";
+  const nodes: ArenaNode[] = d.nodes.map((n) => (n.x > backend.x ? { ...n, x: n.x + COL } : n));
+  nodes.push(
+    node(
+      HARNESS_ID,
+      "agentHarness",
+      backend.x + COL,
+      backend.y,
+      // Same region as the backend it runs in — so no fictional cross-region hop
+      // is introduced (114) and the e2e latency stays byte-identical.
+      backend.region ? { region: backend.region } : {},
+    ),
+  );
+  const edges = d.edges.map((e) =>
+    e.source === backend.id
+      ? { ...e, id: `${HARNESS_ID}-${e.target}`, source: HARNESS_ID }
+      : e,
+  );
+  edges.push(edge(backend.id, HARNESS_ID));
+  return { ...d, nodes, edges };
+}
+
+/** The preset library, each design fronted by the Agent Harness (123). */
+export const EXAMPLES: ArenaExample[] = RAW_EXAMPLES.map((ex) => ({
+  ...ex,
+  build: () => withHarness(ex.build()),
+}));
 
 /** The sample loaded on a first visit (empty localStorage). */
 export const DEFAULT_EXAMPLE_ID = "simple-rag";

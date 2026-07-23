@@ -12,6 +12,7 @@
 import {
   Background,
   BackgroundVariant,
+  ControlButton,
   Controls,
   MarkerType,
   ReactFlow,
@@ -39,12 +40,14 @@ import {
   concurrencyBudgetFor,
   concurrencyStatusFor,
   effectiveCapacity,
+  fanOutFor,
   heldInFlight,
   quotaFactorsFor,
   routingTaxFor,
   worseStatus,
 } from "./model";
 import { EXAMPLES } from "./examples";
+import { autoLayout, measuredSizeOf } from "./layout";
 import { fanoutNudges } from "./nudges";
 import { ARENA_DND_MIME } from "./Palette";
 import { NOTE_MAX, useArena } from "./store";
@@ -66,7 +69,7 @@ export function edgeLabelFor(edge: { note?: string }): string | undefined {
 export function ArenaCanvas() {
   const t = useT();
   const lang = useLang((s) => s.lang);
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, getInternalNode, fitView } = useReactFlow();
 
   const nodes = useArena((s) => s.nodes);
   const edges = useArena((s) => s.edges);
@@ -110,15 +113,24 @@ export function ArenaCanvas() {
     [nodes, edges, callShape, offeredLoad],
   );
 
-  // 119 — the loaded sample's node-anchored explanation bubbles (visibility
-  // derives from exampleId, which every structural edit already clears).
+  // 119/122 — the loaded sample's explanations, now a side-panel list instead of
+  // node-anchored bubbles (visibility still derives from exampleId, which every
+  // structural edit already clears). Hovering an entry lights its node up.
   const exampleId = useArena((s) => s.exampleId);
   const calloutsHidden = useArena((s) => s.calloutsHidden);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const callouts = useMemo(() => {
-    if (!exampleId || calloutsHidden) return new Map<string, string>();
+    if (!exampleId || calloutsHidden) return [];
     const ex = EXAMPLES.find((x) => x.id === exampleId);
-    return new Map((ex?.callouts ?? []).map((c) => [c.nodeId, c.text[lang]]));
-  }, [exampleId, calloutsHidden, lang]);
+    return (ex?.callouts ?? []).map((c) => {
+      const node = nodes.find((n) => n.id === c.nodeId);
+      return {
+        nodeId: c.nodeId,
+        label: node ? KIND_META[node.kind].label[lang] : c.nodeId,
+        text: c.text[lang],
+      };
+    });
+  }, [exampleId, calloutsHidden, nodes, lang]);
 
   const rfNodes = useMemo<Node<ArenaNodeData>[]>(
     () =>
@@ -148,12 +160,14 @@ export function ArenaCanvas() {
             held: heldHere,
             budget,
             connectionWall: budget !== null && heldHere !== null && heldHere > budget,
-            callout: callouts.get(n.id),
+            highlight: n.id === highlightId,
             note: n.note,
+            // 123 — only the harness surfaces the turn fan-out badge.
+            fanOut: n.kind === "agentHarness" ? fanOutFor({ nodes, edges }, n.id) : undefined,
           },
         };
       }),
-    [nodes, metrics, held, callouts, selectedId, lang],
+    [nodes, edges, metrics, held, highlightId, selectedId, lang],
   );
 
   const rfEdges = useMemo<Edge[]>(
@@ -208,6 +222,15 @@ export function ArenaCanvas() {
     [removeEdge, selectEdge],
   );
 
+  // 124 — the tidy pass: reflow by graph depth using the boxes' REAL rendered
+  // sizes (grown banners get room), then re-fit the view. A batch move — the
+  // loaded preset stays selected, exactly like a hand drag.
+  const arrange = useCallback(() => {
+    const { nodes: current, edges: currentEdges, applyPositions } = useArena.getState();
+    applyPositions(autoLayout(current, currentEdges, measuredSizeOf(getInternalNode)));
+    requestAnimationFrame(() => fitView({ padding: 0.15, duration: 300 }));
+  }, [getInternalNode, fitView]);
+
   const selected = nodes.find((n) => n.id === selectedId) ?? null;
 
   return (
@@ -251,7 +274,17 @@ export function ArenaCanvas() {
           proOptions={{ hideAttribution: true }}
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="var(--color-dots)" />
-          <Controls showInteractive={false} />
+          <Controls showInteractive={false}>
+            {/* 124 — one click reflows the boxes (grown banners overlap by hand). */}
+            <ControlButton aria-label={t.arena.autoArrange} title={t.arena.autoArrange} onClick={arrange}>
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                <rect x="1.5" y="2" width="5" height="4.5" rx="1" />
+                <rect x="9.5" y="2" width="5" height="4.5" rx="1" />
+                <rect x="1.5" y="9.5" width="5" height="4.5" rx="1" />
+                <rect x="9.5" y="9.5" width="5" height="4.5" rx="1" />
+              </svg>
+            </ControlButton>
+          </Controls>
         </ReactFlow>
       </div>
 
@@ -292,9 +325,67 @@ export function ArenaCanvas() {
         </div>
       )}
 
+      {/* 122 — the loaded sample's explanations as one docked list (bottom-right,
+          clear of the scale/edge panels top-right and the nudges top-left). */}
+      {callouts.length > 0 && <CalloutPanel callouts={callouts} onHighlight={setHighlightId} />}
+
       {selected && <ScalePanel id={selected.id} />}
       {selectedEdgeId && <EdgePanel id={selectedEdgeId} />}
     </div>
+  );
+}
+
+/**
+ * 122 — the example-notes panel: the preset's callouts as a compact list, each
+ * entry named after its component. Hover/focus lights the matching node up on
+ * the canvas (the spatial link the 119 anchored bubbles carried). ✕ keeps the
+ * 119 semantics: hides the notes for this sample; re-loading shows them again.
+ * Exported for direct testing.
+ */
+export function CalloutPanel({
+  callouts,
+  onHighlight,
+}: {
+  callouts: Array<{ nodeId: string; label: string; text: string }>;
+  onHighlight: (nodeId: string | null) => void;
+}) {
+  const t = useT();
+  return (
+    <aside
+      aria-label={t.arena.calloutsTitle}
+      className="absolute bottom-3 right-3 z-10 w-64 rounded-xl border border-[var(--color-line)] bg-[color-mix(in_srgb,var(--color-panel)_92%,transparent)] p-2.5 shadow-lg backdrop-blur-sm"
+    >
+      <div className="flex items-center justify-between gap-1.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+          {t.arena.calloutsTitle}
+        </span>
+        <button
+          aria-label={t.arena.calloutHide}
+          title={t.arena.calloutHide}
+          onClick={() => useArena.getState().hideCallouts()}
+          className="grid h-4 w-4 place-items-center rounded text-[9px] text-[var(--color-muted)] transition hover:text-[var(--color-ink)]"
+        >
+          ✕
+        </button>
+      </div>
+      <ul className="mt-1.5 flex max-h-56 flex-col gap-1.5 overflow-y-auto">
+        {callouts.map((c) => (
+          <li
+            key={c.nodeId}
+            tabIndex={0}
+            onMouseEnter={() => onHighlight(c.nodeId)}
+            onMouseLeave={() => onHighlight(null)}
+            onFocus={() => onHighlight(c.nodeId)}
+            onBlur={() => onHighlight(null)}
+            className="rounded-lg border border-transparent bg-[var(--color-panel-2)] p-1.5 text-[9.5px] leading-snug text-[var(--color-text-soft)] transition hover:border-[var(--color-sky)] focus:border-[var(--color-sky)] focus:outline-none"
+          >
+            <span className="font-semibold text-[var(--color-sky-soft)]">{c.label}</span>
+            {" — "}
+            <span>{c.text}</span>
+          </li>
+        ))}
+      </ul>
+    </aside>
   );
 }
 

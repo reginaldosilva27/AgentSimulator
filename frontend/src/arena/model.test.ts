@@ -27,9 +27,11 @@ import {
   effectiveCapacity,
   endToEndLatencyMs,
   equilibriumRps,
+  fanOutFor,
   heldInFlight,
   llmCost,
   routingTaxFor,
+  turnPathLatenciesMs,
   worseStatus,
   type ArenaDesign,
 } from "./model";
@@ -793,5 +795,96 @@ describe("backend concurrency wall (118 AC1–AC3)", () => {
     const budget = concurrencyBudgetFor(n("backend", "backend"))!;
     expect(held).toBeGreaterThan(budget); // …while it holds > its stream budget
     expect(worseStatus(m.status, concurrencyStatusFor(held, budget)!)).toBe("critical");
+  });
+});
+
+// --- 123-arena-agent-harness-node -------------------------------------------------
+//
+// The harness is a non-scalable, latency-0, capacity-∞ orchestration node inserted
+// between the backend and its callees. Design A: it changes NO number — it sums its
+// children for latency (like the backend) and is transparent to the routing tax.
+
+describe("123 — the agent harness node", () => {
+  // base (harness-free) vs. the same design with a pass-through harness inserted.
+  const base: ArenaDesign = {
+    nodes: [
+      n("client", "client"),
+      n("backend", "backend"),
+      n("llm", "llm", { replicas: 5, callsPerRequest: 2, region: "us-east" }),
+      n("vectorDb", "vectorDb", { region: "us-east" }),
+    ],
+    edges: [e("client", "backend"), e("backend", "llm"), e("backend", "vectorDb")],
+  };
+  // Reparent backend→{llm,vectorDb} onto the harness; add backend→harness.
+  const withHarness: ArenaDesign = {
+    nodes: [...base.nodes, n("harness", "agentHarness", { region: "us-east" })],
+    edges: [
+      e("client", "backend"),
+      e("backend", "harness"),
+      e("harness", "llm"),
+      e("harness", "vectorDb"),
+    ],
+  };
+  const LOAD = 300; // llm sees 600 calls vs 750 cap → healthy, nothing sheds
+
+  it("is never the bottleneck, even under a crushing load (AC2)", () => {
+    const crushing = 1_000_000;
+    const m = computeMetrics(withHarness, crushing).get("harness")!;
+    expect(m.bottleneck).toBe(false);
+    expect(m.utilization).toBeLessThan(0.01);
+    expect(m.status).toBe("healthy");
+  });
+
+  it("has no held-stream budget of its own — the backend carries the wall (AC2)", () => {
+    expect(concurrencyBudgetFor(n("harness", "agentHarness"))).toBeNull();
+  });
+
+  it("sums its children for turn latency, like the backend (AC4)", () => {
+    const paths = turnPathLatenciesMs(withHarness, LOAD);
+    // llm path = cpr(2) × 2s base; vectorDb path = its base; harness sums both.
+    const llmPath = paths.get("llm")!;
+    const vecPath = paths.get("vectorDb")!;
+    expect(paths.get("harness")!).toBeCloseTo(llmPath + vecPath, 5);
+  });
+
+  it("leaves every other node's metrics + e2e latency identical (AC6, Design A)", () => {
+    const mBase = computeMetrics(base, LOAD);
+    const mH = computeMetrics(withHarness, LOAD);
+    for (const id of ["client", "backend", "llm", "vectorDb"]) {
+      expect(mH.get(id)!.arriving, `${id} arriving`).toBeCloseTo(mBase.get(id)!.arriving, 5);
+      expect(mH.get(id)!.throughput, `${id} throughput`).toBeCloseTo(mBase.get(id)!.throughput, 5);
+      expect(mH.get(id)!.utilization, `${id} util`).toBeCloseTo(mBase.get(id)!.utilization, 5);
+      expect(mH.get(id)!.shedRps, `${id} shed`).toBeCloseTo(mBase.get(id)!.shedRps, 5);
+    }
+    expect(endToEndLatencyMs(withHarness, LOAD)).toBeCloseTo(endToEndLatencyMs(base, LOAD), 5);
+  });
+
+  it("keeps the routing tax on the backend (transparent harness), not toothless (AC6)", () => {
+    // Backend wired straight to the 5-deployment pool pays the tax.
+    expect(routingTaxFor(base, "backend").tax).toBeGreaterThan(0);
+    // With the harness in between, the backend STILL pays the same tax…
+    expect(routingTaxFor(withHarness, "backend").tax).toBeCloseTo(
+      routingTaxFor(base, "backend").tax,
+      5,
+    );
+    expect(routingTaxFor(withHarness, "backend").deployments).toBe(5);
+    // …and the harness itself is exempt (it holds no endpoints).
+    expect(routingTaxFor(withHarness, "harness").tax).toBe(0);
+  });
+
+  it("surfaces the turn fan-out read from its LLM child (AC3)", () => {
+    expect(fanOutFor(withHarness, "harness")).toBe(2);
+    // reads an AI-Gateway child's fan-out too (fan-out lives on the gateway there).
+    const viaGw: ArenaDesign = {
+      nodes: [
+        n("harness", "agentHarness"),
+        n("gw", "aiGateway", { callsPerRequest: 3 }),
+        n("llm", "llm"),
+      ],
+      edges: [e("harness", "gw"), e("gw", "llm")],
+    };
+    expect(fanOutFor(viaGw, "harness")).toBe(3);
+    // null when nothing on the model path is wired yet.
+    expect(fanOutFor({ nodes: [n("harness", "agentHarness")], edges: [] }, "harness")).toBeNull();
   });
 });

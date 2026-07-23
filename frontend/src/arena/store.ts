@@ -224,6 +224,9 @@ interface ArenaStore extends ArenaState {
   dragNode: (id: string, pos: { x: number; y: number }) => void;
   /** Commit a position (drag end) — updates state AND persists. */
   moveNode: (id: string, pos: { x: number; y: number }) => void;
+  /** 124 — batch move (the auto-arrange button): one commit for all positions.
+   *  Non-structural, like moveNode — the loaded example stays selected. */
+  applyPositions: (pos: Record<string, { x: number; y: number }>) => void;
   connect: (source: string, target: string) => void;
   removeEdge: (id: string) => void;
   setSize: (id: string, size: InstanceSize) => void;
@@ -350,6 +353,9 @@ export const useArena = create<ArenaStore>((set, get) => {
 
     moveNode: (id, pos) =>
       save({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, ...pos } : n)) }),
+
+    applyPositions: (pos) =>
+      save({ nodes: get().nodes.map((n) => (pos[n.id] ? { ...n, ...pos[n.id] } : n)) }),
 
     connect: (source, target) => {
       if (source === target) return;

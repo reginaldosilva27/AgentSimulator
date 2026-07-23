@@ -452,3 +452,32 @@ describe("arena store — node/edge annotations (120)", () => {
     expect(restored.nodes.find((n) => n.id === "b")!.note!.length).toBe(NOTE_MAX); // capped
   });
 });
+
+// --- 124-arena-auto-arrange ---------------------------------------------------------
+
+describe("arena store — applyPositions (124 AC3)", () => {
+  it("moves every listed node, keeps the loaded example selected, and persists", () => {
+    useArena.getState().loadExample("simple-rag");
+    const before = useArena.getState().nodes;
+    const pos = Object.fromEntries(before.map((n, i) => [n.id, { x: i * 300, y: i * 10 }]));
+
+    useArena.getState().applyPositions(pos);
+
+    const after = useArena.getState().nodes;
+    for (const [i, n] of after.entries()) {
+      expect({ x: n.x, y: n.y }).toEqual({ x: i * 300, y: i * 10 });
+    }
+    // Non-structural: the preset (and thus its notes panel) survives the tidy.
+    expect(useArena.getState().exampleId).toBe("simple-rag");
+    // Persisted in one commit.
+    const blob = JSON.parse(localStorage.getItem(ARENA_STORAGE_KEY)!);
+    expect(blob.nodes.find((n: { id: string }) => n.id === after[1].id).x).toBe(300);
+  });
+
+  it("ignores unknown ids and leaves unlisted nodes untouched", () => {
+    const id = useArena.getState().addNode("backend", { x: 7, y: 8 });
+    useArena.getState().applyPositions({ ghost: { x: 1, y: 1 } });
+    const n = useArena.getState().nodes.find((x) => x.id === id)!;
+    expect({ x: n.x, y: n.y }).toEqual({ x: 7, y: 8 });
+  });
+});

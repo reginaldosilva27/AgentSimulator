@@ -131,13 +131,31 @@ export function routingTaxFor(
   nodeId: string,
 ): { tax: number; deployments: number } {
   const node = design.nodes.find((sp) => sp.id === nodeId);
-  if (!node || splitsLoad(node.kind)) return { tax: 0, deployments: 0 };
+  // 123 — the harness itself is exempt (like a router): it holds no endpoints, it
+  // runs inside the backend whose tax already covers the routing.
+  if (!node || splitsLoad(node.kind) || node.kind === "agentHarness") {
+    return { tax: 0, deployments: 0 };
+  }
   const byId = new Map(design.nodes.map((sp) => [sp.id, sp]));
-  let deployments = 0;
+  const llmDeploymentsUnder = (parentId: string): number => {
+    let d = 0;
+    for (const edge of design.edges) {
+      if (edge.source !== parentId) continue;
+      const child = byId.get(edge.target);
+      if (child?.kind === "llm") d += Math.max(1, child.replicas);
+    }
+    return d;
+  };
+  let deployments = llmDeploymentsUnder(nodeId);
+  // 123 — the harness is TRANSPARENT for the tax: LLM endpoints it fronts are
+  // still managed by this node's app code (the harness is that code, in-process),
+  // so a harness inserted between the backend and its LLMs leaves the tax exactly
+  // where it was. Count the harness's own LLM children too.
   for (const edge of design.edges) {
     if (edge.source !== nodeId) continue;
-    const child = byId.get(edge.target);
-    if (child?.kind === "llm") deployments += Math.max(1, child.replicas);
+    if (byId.get(edge.target)?.kind === "agentHarness") {
+      deployments += llmDeploymentsUnder(edge.target);
+    }
   }
   const tax = Math.min(ROUTING_TAX_CAP, ROUTING_TAX_RATE * Math.max(0, deployments - 1));
   return { tax, deployments };
@@ -347,7 +365,10 @@ export function turnPathLatenciesMs(
     const downstream =
       kids.length === 0
         ? 0
-        : spec.kind === "backend"
+        : // 123 — the backend AND the agent harness orchestrate the turn: their
+          // branches (retrieve → generate) run in SEQUENCE, so they SUM. Every
+          // other kind fans one call to alternatives → max.
+          spec.kind === "backend" || spec.kind === "agentHarness"
           ? kids.reduce((a, b) => a + b, 0)
           : Math.max(...kids);
     const total = Math.max(1, spec.callsPerRequest ?? 1) * (m.latencyMs + downstream);
@@ -518,4 +539,24 @@ export function endToEndLatencyMs(design: ArenaDesign, offeredLoad: number): num
     }
   }
   return worst;
+}
+
+/**
+ * 123 — the turn fan-out the harness surfaces (Design A, display-only): the LLM
+ * calls one agent turn makes, read from the harness's model-path child. That
+ * child is either an LLM directly or an AI Gateway fronting a pool — both carry
+ * `callsPerRequest` (the fan-out lives on whichever the backend talks to, never
+ * both). Returns `null` when the harness has no model-path child wired yet.
+ */
+export function fanOutFor(design: ArenaDesign, harnessId: string): number | null {
+  const byId = new Map(design.nodes.map((sp) => [sp.id, sp]));
+  let fanOut: number | null = null;
+  for (const edge of design.edges) {
+    if (edge.source !== harnessId) continue;
+    const child = byId.get(edge.target);
+    if (child && (child.kind === "llm" || child.kind === "aiGateway")) {
+      fanOut = Math.max(fanOut ?? 0, Math.max(1, child.callsPerRequest ?? 1));
+    }
+  }
+  return fanOut;
 }

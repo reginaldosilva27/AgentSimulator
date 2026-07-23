@@ -3,7 +3,7 @@
 // Seeds a design in the store and asserts the live node boxes render their
 // modeled metrics and that the saturated LLM lights up as the bottleneck.
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -174,25 +174,45 @@ describe("backend connection wall (118 AC4)", () => {
   });
 });
 
-// --- 119-arena-example-callouts ----------------------------------------------------
+// --- 119/122-arena-example-callouts (side-panel list) -------------------------------
 
-describe("example callouts render on the canvas (119 AC2/AC3)", () => {
-  const firstCallout = () => EXAMPLES.find((e) => e.id === "simple-rag")!.callouts[0];
+describe("example callouts render as a side-panel list (122 AC1–AC4)", () => {
+  const sample = () => EXAMPLES.find((e) => e.id === "simple-rag")!;
+  const firstCallout = () => sample().callouts[0];
 
-  it("shows the loaded preset's bubbles and hides them all on ✕", () => {
+  it("AC1 — lists every callout in one panel, labelled by component, no node bubbles", () => {
     useArena.getState().loadExample("simple-rag");
     render(
       <ReactFlowProvider>
         <ArenaCanvas />
       </ReactFlowProvider>,
     );
-    expect(screen.getByText(firstCallout().text.en)).toBeTruthy();
-    // React Flow's node wrapper hides children from the a11y tree — query by title.
-    fireEvent.click(screen.getAllByTitle(UI.en.arena.calloutHide)[0]);
-    expect(screen.queryByText(firstCallout().text.en)).toBeNull();
+    const panel = screen.getByRole("complementary", { name: UI.en.arena.calloutsTitle });
+    // Every callout of the preset is listed, each entry naming its component.
+    for (const c of sample().callouts) {
+      const entry = within(panel).getByText(c.text.en);
+      expect(entry).toBeTruthy();
+    }
+    expect(within(panel).getByText("Client")).toBeTruthy();
+    expect(within(panel).getByText("LLM")).toBeTruthy();
+    // The texts live ONLY in the panel — no node-anchored bubble remains.
+    expect(screen.getAllByText(firstCallout().text.en)).toHaveLength(1);
   });
 
-  it("renders no bubbles when the canvas is not a preset", () => {
+  it("AC2 — ✕ hides the panel; re-loading a sample shows it again", () => {
+    useArena.getState().loadExample("simple-rag");
+    render(
+      <ReactFlowProvider>
+        <ArenaCanvas />
+      </ReactFlowProvider>,
+    );
+    fireEvent.click(screen.getByTitle(UI.en.arena.calloutHide));
+    expect(screen.queryByText(firstCallout().text.en)).toBeNull();
+    act(() => useArena.getState().loadExample("simple-rag"));
+    expect(screen.getByText(firstCallout().text.en)).toBeTruthy();
+  });
+
+  it("AC3 — a structural edit removes the panel", () => {
     useArena.getState().loadExample("simple-rag");
     useArena.getState().addNode("cache", { x: 900, y: 0 }); // structural edit
     render(
@@ -201,6 +221,71 @@ describe("example callouts render on the canvas (119 AC2/AC3)", () => {
       </ReactFlowProvider>,
     );
     expect(screen.queryByText(firstCallout().text.en)).toBeNull();
+  });
+
+  it("AC4 — hovering an entry highlights the matching canvas node", () => {
+    useArena.getState().loadExample("simple-rag");
+    render(
+      <ReactFlowProvider>
+        <ArenaCanvas />
+      </ReactFlowProvider>,
+    );
+    const panel = screen.getByRole("complementary", { name: UI.en.arena.calloutsTitle });
+    const entry = within(panel).getByText(firstCallout().text.en).closest("li")!;
+    fireEvent.mouseEnter(entry);
+    const lit = document.querySelector(`[data-highlighted="${firstCallout().nodeId}"]`);
+    expect(lit).toBeTruthy();
+    fireEvent.mouseLeave(entry);
+    expect(document.querySelector("[data-highlighted]")).toBeNull();
+  });
+});
+
+// --- 124-arena-auto-arrange ----------------------------------------------------------
+
+describe("auto-arrange button (124 AC4)", () => {
+  it("tidies overlapping same-column boxes apart on click", () => {
+    // Two LLM pools dropped on top of each other, both fed by one backend.
+    useArena.setState({
+      nodes: [
+        { id: "backend-1", kind: "backend", size: "medium", replicas: 1, x: 0, y: 0 },
+        { id: "llm-2", kind: "llm", size: "medium", replicas: 1, x: 220, y: 10 },
+        { id: "llm-3", kind: "llm", size: "medium", replicas: 1, x: 225, y: 20 },
+      ],
+      edges: [
+        { id: "backend-1-llm-2", source: "backend-1", target: "llm-2" },
+        { id: "backend-1-llm-3", source: "backend-1", target: "llm-3" },
+      ],
+      offeredLoad: 100,
+      selectedId: null,
+      selectedEdgeId: null,
+    });
+    render(
+      <ReactFlowProvider>
+        <ArenaCanvas />
+      </ReactFlowProvider>,
+    );
+    fireEvent.click(screen.getByTitle(UI.en.arena.autoArrange));
+
+    const nodes = useArena.getState().nodes;
+    const [backend, llmA, llmB] = ["backend-1", "llm-2", "llm-3"].map(
+      (id) => nodes.find((n) => n.id === id)!,
+    );
+    // Column by depth: the backend sits left of both pools…
+    expect(backend.x).toBeLessThan(llmA.x);
+    expect(llmA.x).toBe(llmB.x);
+    // …and the pools no longer overlap vertically (default box height ≥ 120).
+    expect(Math.abs(llmA.y - llmB.y)).toBeGreaterThanOrEqual(120);
+  });
+
+  it("is a no-op on an empty canvas (no crash)", () => {
+    useArena.setState({ nodes: [], edges: [], offeredLoad: 100 });
+    render(
+      <ReactFlowProvider>
+        <ArenaCanvas />
+      </ReactFlowProvider>,
+    );
+    fireEvent.click(screen.getByTitle(UI.en.arena.autoArrange));
+    expect(useArena.getState().nodes).toEqual([]);
   });
 });
 

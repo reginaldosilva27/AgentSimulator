@@ -20,6 +20,7 @@ export type ArenaKind =
   // agentic stations (mirror the Simulator's real stations)
   | "client"
   | "backend"
+  | "agentHarness"
   | "llm"
   | "vectorDb"
   | "mcp"
@@ -63,6 +64,10 @@ export const BENCHMARKS: Record<ArenaKind, Benchmark> = {
   aiGateway: { baseCapacity: 50_000, baseLatencyMs: 5 },
   loadBalancer: { baseCapacity: 100_000, baseLatencyMs: 1 },
   backend: { baseCapacity: 5_000, baseLatencyMs: 20 },
+  // 123 — the agent harness (ReAct loop) runs IN-PROCESS inside the backend, so it
+  // is not a capacity tier of its own: unbounded capacity (never the wall) and zero
+  // added latency. Its only job on the canvas is to make the turn fan-out legible.
+  agentHarness: { baseCapacity: 1_000_000, baseLatencyMs: 0 },
   // 116 — one deployment = one quota block. Anchor: Azure OpenAI Global Standard
   // quota for gpt-4.1-mini, per region/subscription (May-2026 docs), at the stated
   // agent-shaped call of ~2.5k tokens: Tier 1 = 5M TPM ≈ 33 calls/s · Tier 3 =
@@ -285,6 +290,26 @@ export const KIND_META: Record<ArenaKind, KindMeta> = {
       sizeMeaning: { en: "vCPU / memory per container", pt: "vCPU / memória por container" },
     },
   },
+  agentHarness: {
+    label: { en: "Agent Harness", pt: "Harness do Agente" },
+    description: {
+      en: "The ReAct loop that runs the agent",
+      pt: "O loop ReAct que executa o agente",
+    },
+    // §5 — the managed agent-orchestration runtimes (proper nouns, not translated).
+    clouds: {
+      azure: "AI Foundry Agent Service",
+      aws: "Bedrock Agents",
+      gcp: "Vertex AI Agent Engine",
+    },
+    info: {
+      en: "The agent's orchestration loop (LangGraph/ReAct), running IN-PROCESS inside the Backend — it is not a tier you scale on its own. It's shown as its own box to make the turn FAN-OUT legible: one user request becomes N model calls as the loop thinks → calls tools → generates. To add capacity, scale the Backend (containers) and the LLM (quota), not the harness.",
+      pt: "O loop de orquestração do agente (LangGraph/ReAct), rodando IN-PROCESS dentro do Backend — não é um tier que você escala sozinho. É mostrado como caixa própria para tornar o FAN-OUT do turno legível: um request de usuário vira N chamadas ao modelo à medida que o loop pensa → chama ferramentas → gera. Para ganhar capacidade, escale o Backend (containers) e o LLM (cota), não o harness.",
+    },
+    // Non-scalable (like the client): it runs in the backend process — no size /
+    // replicas knobs. The ScalePanel hides the scaling block when this is null.
+    scaling: null,
+  },
   llm: {
     label: { en: "LLM", pt: "LLM" },
     description: {
@@ -471,6 +496,7 @@ export const KIND_META: Record<ArenaKind, KindMeta> = {
 export const PALETTE_ORDER: readonly ArenaKind[] = [
   "client",
   "backend",
+  "agentHarness",
   "llm",
   "vectorDb",
   "mcp",

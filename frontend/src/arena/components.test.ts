@@ -7,9 +7,12 @@ import {
   ARENA_REGIONS,
   BENCHMARKS,
   CALL_SHAPE_BOUNDS,
+  CALLS_CONFIGURABLE,
+  CONCURRENCY_BUDGET_PER_UNIT,
   DEFAULT_CALL_SHAPE,
   DEFAULT_HIT_RATIO,
   DEFAULT_SEMANTIC_HIT_RATIO,
+  isCacheLike,
   KIND_META,
   LLM_COST_PER_CALL_USD,
   LLM_COST_PER_DEPLOYMENT_HOUR_USD,
@@ -160,5 +163,26 @@ describe("LLM call shape drives capacity, latency, cost and quota (117 AC1–AC3
     expect(CALL_SHAPE_BOUNDS.inputTokens.max).toBeGreaterThanOrEqual(8000); // big system prompts + history
     expect(CALL_SHAPE_BOUNDS.outputTokens.min).toBeLessThanOrEqual(DEFAULT_CALL_SHAPE.outputTokens);
     expect(CALL_SHAPE_BOUNDS.outputTokens.max).toBeGreaterThanOrEqual(2000);
+  });
+});
+
+// --- 123-arena-agent-harness-node -------------------------------------------------
+
+describe("123 — the agent harness component (AC1, AC2)", () => {
+  it("is a palette kind with a latency-0, capacity-∞ benchmark", () => {
+    expect(PALETTE_ORDER).toContain("agentHarness");
+    expect(BENCHMARKS.agentHarness.baseLatencyMs).toBe(0);
+    expect(BENCHMARKS.agentHarness.baseCapacity).toBeGreaterThanOrEqual(1_000_000);
+  });
+
+  it("is non-scalable (no scaling vocabulary — like the client)", () => {
+    expect(KIND_META.agentHarness.scaling).toBeNull();
+  });
+
+  it("is excluded from routing, caching, fan-out config and the stream budget", () => {
+    expect(splitsLoad("agentHarness")).toBe(false);
+    expect(isCacheLike("agentHarness")).toBe(false);
+    expect(CALLS_CONFIGURABLE.has("agentHarness")).toBe(false);
+    expect(CONCURRENCY_BUDGET_PER_UNIT.agentHarness).toBeUndefined();
   });
 });
