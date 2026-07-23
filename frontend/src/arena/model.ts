@@ -12,17 +12,22 @@
 
 import {
   BENCHMARKS,
+  CONCURRENCY_BUDGET_PER_UNIT,
   CROSS_REGION_LATENCY_MS,
+  DEFAULT_CALL_SHAPE,
   defaultHitRatioFor,
   isCacheLike,
-  LLM_COST_PER_CALL_USD,
   LLM_COST_PER_DEPLOYMENT_HOUR_USD,
-  REGIONAL_LLM_QUOTA_RPS,
+  llmBaseCapacityFor,
+  llmBaseLatencyMsFor,
+  llmCostPerCallUsd,
+  regionalLlmQuotaRpsFor,
   ROUTING_TAX_CAP,
   ROUTING_TAX_RATE,
   SIZE_MULTIPLIER,
   splitsLoad,
   type ArenaKind,
+  type CallShape,
   type InstanceSize,
 } from "./components";
 
@@ -47,11 +52,17 @@ export interface ArenaEdge {
   id: string;
   source: string;
   target: string;
+  /** 120 — optional free-text annotation justifying this connection. The model
+   *  ignores it entirely (like a node's `region` in 106 v1); it's canvas content. */
+  note?: string;
 }
 
 export interface ArenaDesign {
   nodes: ArenaNodeSpec[];
   edges: ArenaEdge[];
+  /** 117 — the workload's call shape (tokens per LLM call). Absent = the stated
+   *  default (~2k in + 500 out), which reproduces pre-117 behavior exactly. */
+  callShape?: CallShape;
 }
 
 export type NodeStatus = "healthy" | "warning" | "critical" | "unreachable";
@@ -90,11 +101,20 @@ export function rpsOf(users: number, thinkTimeSec: number): number {
   return Math.max(0, Math.round(users / Math.max(1, thinkTimeSec)));
 }
 
-/** Effective capacity of a node: benchmark × vertical size × horizontal replicas. */
-export function effectiveCapacity(spec: Pick<ArenaNodeSpec, "kind" | "size" | "replicas">): number {
-  const base = BENCHMARKS[spec.kind].baseCapacity;
+/** Effective capacity of a node: benchmark × vertical size × horizontal replicas.
+ *  117 — for LLM nodes the base is TPM ÷ tokens at the workload's call shape. */
+export function effectiveCapacity(
+  spec: Pick<ArenaNodeSpec, "kind" | "size" | "replicas">,
+  shape: CallShape = DEFAULT_CALL_SHAPE,
+): number {
+  const base = spec.kind === "llm" ? llmBaseCapacityFor(shape) : BENCHMARKS[spec.kind].baseCapacity;
   const replicas = Math.max(1, spec.replicas);
   return base * SIZE_MULTIPLIER[spec.size] * replicas;
+}
+
+/** 117 — unloaded service latency: shape-derived for the LLM, benchmark elsewhere. */
+function baseLatencyMsOf(kind: ArenaKind, shape: CallShape): number {
+  return kind === "llm" ? llmBaseLatencyMsFor(shape) : BENCHMARKS[kind].baseLatencyMs;
 }
 
 /**
@@ -130,11 +150,15 @@ export function routingTaxFor(
  * squeezed proportionally (order-independent, all equally limited).
  */
 export function quotaFactorsFor(design: ArenaDesign): Map<string, number> {
+  // 117 — the quota is a TOKEN budget: both a pool's capacity and the regional
+  // cap are TPM ÷ tokens at the workload's call shape.
+  const shape = design.callShape ?? DEFAULT_CALL_SHAPE;
+  const quotaRps = regionalLlmQuotaRpsFor(shape);
   const rawByRegion = new Map<string, number>();
   for (const sp of design.nodes) {
     if (sp.kind !== "llm") continue;
     const region = sp.region ?? "unassigned";
-    rawByRegion.set(region, (rawByRegion.get(region) ?? 0) + effectiveCapacity(sp));
+    rawByRegion.set(region, (rawByRegion.get(region) ?? 0) + effectiveCapacity(sp, shape));
   }
   const factors = new Map<string, number>();
   for (const sp of design.nodes) {
@@ -143,7 +167,7 @@ export function quotaFactorsFor(design: ArenaDesign): Map<string, number> {
       continue;
     }
     const raw = rawByRegion.get(sp.region ?? "unassigned")!;
-    factors.set(sp.id, raw > REGIONAL_LLM_QUOTA_RPS ? REGIONAL_LLM_QUOTA_RPS / raw : 1);
+    factors.set(sp.id, raw > quotaRps ? quotaRps / raw : 1);
   }
   return factors;
 }
@@ -177,6 +201,8 @@ function statusFor(utilization: number): Exclude<NodeStatus, "unreachable"> {
  *  - nodes trapped in a cycle never reach in-degree 0 → marked `unreachable`.
  */
 export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<string, NodeMetrics> {
+  // 117 — the workload call shape drives the LLM tier's capacity + latency.
+  const shape = design.callShape ?? DEFAULT_CALL_SHAPE;
   const nodes = new Map(design.nodes.map((sp) => [sp.id, sp]));
   const childrenOf = new Map<string, string[]>();
   const indegree = new Map<string, number>();
@@ -213,7 +239,7 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
     const id = queue.shift()!;
     order.push(id);
     const spec = nodes.get(id)!;
-    const capacity = effectiveCapacity(spec) * (1 - taxOf.get(id)!) * quotaOf.get(id)!;
+    const capacity = effectiveCapacity(spec, shape) * (1 - taxOf.get(id)!) * quotaOf.get(id)!;
     const inbound = arriving.get(id)! * Math.max(1, spec.callsPerRequest ?? 1);
     inboundOf.set(id, inbound);
     const out = Math.min(inbound, capacity);
@@ -238,7 +264,7 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
   for (const sp of design.nodes) {
     const routingTax = taxOf.get(sp.id)!;
     const quotaFactor = quotaOf.get(sp.id)!;
-    const capacity = effectiveCapacity(sp) * (1 - routingTax) * quotaFactor;
+    const capacity = effectiveCapacity(sp, shape) * (1 - routingTax) * quotaFactor;
     if (!reached.has(sp.id)) {
       // Trapped in a cycle — no honest capacity credit (mirrors the reference tool).
       metrics.set(sp.id, {
@@ -247,7 +273,7 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
         throughput: 0,
         capacity,
         utilization: 0,
-        latencyMs: BENCHMARKS[sp.kind].baseLatencyMs,
+        latencyMs: baseLatencyMsOf(sp.kind, shape),
         status: "unreachable",
         bottleneck: false,
         routingTax,
@@ -263,7 +289,7 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
       throughput: Math.min(inbound, capacity),
       capacity,
       utilization,
-      latencyMs: queueLatency(BENCHMARKS[sp.kind].baseLatencyMs, utilization),
+      latencyMs: queueLatency(baseLatencyMsOf(sp.kind, shape), utilization),
       status: statusFor(utilization),
       bottleneck: utilization > 1,
       routingTax,
@@ -375,6 +401,46 @@ export function heldInFlight(design: ArenaDesign, offeredLoad: number): Map<stri
 }
 
 /**
+ * 118-arena-backend-concurrency — the held-stream budget of a node: per-unit
+ * benchmark × size × replicas, or `null` for kinds with no stated wall.
+ */
+export function concurrencyBudgetFor(
+  spec: Pick<ArenaNodeSpec, "kind" | "size" | "replicas">,
+): number | null {
+  const perUnit = CONCURRENCY_BUDGET_PER_UNIT[spec.kind];
+  if (perUnit === undefined) return null;
+  return perUnit * SIZE_MULTIPLIER[spec.size] * Math.max(1, spec.replicas);
+}
+
+/** 118 — connection pressure: held ÷ budget; null when either side has no honest
+ *  figure (a shedding path yields held = null; most kinds have no budget). */
+export function concurrencyPressure(held: number | null, budget: number | null): number | null {
+  if (held === null || budget === null || budget <= 0) return null;
+  return held / budget;
+}
+
+/** 118 — pressure through the same 108 thresholds the QPS status uses. */
+export function concurrencyStatusFor(
+  held: number | null,
+  budget: number | null,
+): Exclude<NodeStatus, "unreachable"> | null {
+  const p = concurrencyPressure(held, budget);
+  return p === null ? null : statusFor(p);
+}
+
+const STATUS_RANK: Record<NodeStatus, number> = {
+  healthy: 0,
+  warning: 1,
+  critical: 2,
+  unreachable: 3,
+};
+
+/** 118 — a node's effective status is the WORSE of its independent signals. */
+export function worseStatus(a: NodeStatus, b: NodeStatus): NodeStatus {
+  return STATUS_RANK[b] > STATUS_RANK[a] ? b : a;
+}
+
+/**
  * 111 — the two LLM bills. Provisioned: reserved capacity (PTU-style) priced per
  * deployment × size, billed even idle — headroom is never free. Usage: served
  * calls (429s aren't billed) at the stated per-call shape. Both are teaching
@@ -385,13 +451,15 @@ export function llmCost(
   offeredLoad: number,
 ): { provisionedPerHour: number; usagePerHour: number } {
   const metrics = computeMetrics(design, offeredLoad);
+  // 117 — the usage bill prices the workload's actual call shape.
+  const perCallUsd = llmCostPerCallUsd(design.callShape ?? DEFAULT_CALL_SHAPE);
   let provisionedPerHour = 0;
   let usagePerHour = 0;
   for (const sp of design.nodes) {
     if (sp.kind !== "llm") continue;
     provisionedPerHour +=
       Math.max(1, sp.replicas) * SIZE_MULTIPLIER[sp.size] * LLM_COST_PER_DEPLOYMENT_HOUR_USD;
-    usagePerHour += metrics.get(sp.id)!.throughput * LLM_COST_PER_CALL_USD * 3600;
+    usagePerHour += metrics.get(sp.id)!.throughput * perCallUsd * 3600;
   }
   return { provisionedPerHour, usagePerHour };
 }

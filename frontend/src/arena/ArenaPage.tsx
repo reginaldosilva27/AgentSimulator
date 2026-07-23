@@ -10,10 +10,15 @@
 // the estimated LLM cost/hour (stated per-call assumption).
 
 import { ReactFlowProvider } from "@xyflow/react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { useLang, useT } from "../i18n";
 import { ArenaCanvas } from "./ArenaCanvas";
+import {
+  CALL_SHAPE_BOUNDS,
+  llmBaseCapacityFor,
+  llmCostPerCallUsd,
+} from "./components";
 import { EXAMPLES } from "./examples";
 import { formatLatency, formatQps } from "./format";
 import { computeMetrics, endToEndLatencyMs, llmCost, rpsOf } from "./model";
@@ -31,7 +36,10 @@ export function ArenaPage() {
   const thinkTimeSec = useArena((s) => s.thinkTimeSec);
   const offeredLoad = useArena((s) => s.offeredLoad);
   const exampleId = useArena((s) => s.exampleId);
-  const { setUsers, setThinkTime, clear, loadExample } = useArena.getState();
+  const callShape = useArena((s) => s.callShape);
+  const { setUsers, setThinkTime, setCallShape, clear, loadExample } = useArena.getState();
+  // 117 — the payload popover (transient UI state).
+  const [payloadOpen, setPayloadOpen] = useState(false);
 
   const locale = lang === "pt" ? "pt-BR" : "en-US";
 
@@ -43,7 +51,7 @@ export function ArenaPage() {
     if (nodes.length === 0) {
       return { e2eMs: 0, cost: { provisionedPerHour: 0, usagePerHour: 0 }, totalShed: 0 };
     }
-    const design = { nodes, edges };
+    const design = { nodes, edges, callShape };
     const metrics = computeMetrics(design, offeredLoad);
     let shed = 0;
     for (const n of nodes) shed += metrics.get(n.id)!.shedRps;
@@ -52,7 +60,7 @@ export function ArenaPage() {
       cost: llmCost(design, offeredLoad),
       totalShed: shed,
     };
-  }, [nodes, edges, offeredLoad]);
+  }, [nodes, edges, offeredLoad, callShape]);
 
   const fmtUsd = (v: number) =>
     v >= 100 ? Math.round(v).toLocaleString(locale) : v.toFixed(2);
@@ -66,7 +74,9 @@ export function ArenaPage() {
           <p className="text-[10.5px] text-[var(--color-muted)]">{t.arena.tagline}</p>
         </div>
 
-        <div className="flex min-w-[260px] flex-1 items-center gap-3">
+        {/* flex-wrap + min-w-0: on narrow bars the nowrap readout drops to its own
+            line inside the cluster instead of overflowing under the siblings. */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
           <label className="whitespace-nowrap text-[11px] font-medium text-[var(--color-text-soft)]">
             {t.arena.usersLabel}
           </label>
@@ -89,7 +99,7 @@ export function ArenaPage() {
           >
             {THINK_TIMES.map((s) => (
               <option key={s} value={s}>
-                1/{s}s
+                {t.arena.thinkTimeOption(s)}
               </option>
             ))}
           </select>
@@ -100,15 +110,19 @@ export function ArenaPage() {
             const throttled = demand > 0 && (demand - offeredLoad) / demand > 0.05;
             return (
               <span
-                className="whitespace-nowrap text-right font-mono text-[11px] text-[var(--color-sky-soft)]"
+                className="font-mono text-[11px] text-[var(--color-sky-soft)]"
                 title={throttled ? t.arena.closedLoopHint : t.arena.thinkTimeHint}
               >
-                {t.arena.usersReadout(
-                  users.toLocaleString(locale),
-                  demand.toLocaleString(locale),
-                )}
+                {/* nowrap per segment (not on the whole readout) so a narrow bar
+                    breaks between the demanded and effective figures. */}
+                <span className="whitespace-nowrap">
+                  {t.arena.usersReadout(
+                    users.toLocaleString(locale),
+                    demand.toLocaleString(locale),
+                  )}
+                </span>
                 {throttled && (
-                  <span className="text-[var(--color-warn)]">
+                  <span className="whitespace-nowrap text-[var(--color-warn)]">
                     {" "}
                     {t.arena.effectiveRate(offeredLoad.toLocaleString(locale))}
                   </span>
@@ -118,9 +132,70 @@ export function ArenaPage() {
           })()}
         </div>
 
+        {/* 117 — the workload payload: the call shape behind capacity/latency/cost. */}
+        <div className="relative">
+          <button
+            aria-label={t.arena.payload}
+            title={t.arena.payloadHint}
+            aria-expanded={payloadOpen}
+            onClick={() => setPayloadOpen((v) => !v)}
+            className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel-2)] px-2.5 py-1 text-[11px] text-[var(--color-text-soft)] transition hover:border-[var(--color-sky)]"
+          >
+            {t.arena.payload}:{" "}
+            <span className="font-mono">
+              {t.arena.payloadReadout(
+                callShape.inputTokens.toLocaleString(locale),
+                callShape.outputTokens.toLocaleString(locale),
+              )}
+            </span>
+          </button>
+          {payloadOpen && (
+            <div className="absolute right-0 top-full z-20 mt-1 w-72 rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-3 shadow-lg">
+              <p className="text-[10px] leading-snug text-[var(--color-text-soft)]">
+                {t.arena.payloadHint}
+              </p>
+              <label className="mt-2 block text-[10px] text-[var(--color-text-soft)]">
+                {t.arena.payloadInput}:{" "}
+                <span className="font-mono">{callShape.inputTokens.toLocaleString(locale)}</span>
+              </label>
+              <input
+                type="range"
+                min={CALL_SHAPE_BOUNDS.inputTokens.min}
+                max={CALL_SHAPE_BOUNDS.inputTokens.max}
+                step={CALL_SHAPE_BOUNDS.inputTokens.step}
+                value={callShape.inputTokens}
+                onChange={(ev) => setCallShape(Number(ev.target.value), callShape.outputTokens)}
+                className="mt-1 w-full accent-[var(--color-sky)]"
+                aria-label={t.arena.payloadInput}
+              />
+              <label className="mt-2 block text-[10px] text-[var(--color-text-soft)]">
+                {t.arena.payloadOutput}:{" "}
+                <span className="font-mono">{callShape.outputTokens.toLocaleString(locale)}</span>
+              </label>
+              <input
+                type="range"
+                min={CALL_SHAPE_BOUNDS.outputTokens.min}
+                max={CALL_SHAPE_BOUNDS.outputTokens.max}
+                step={CALL_SHAPE_BOUNDS.outputTokens.step}
+                value={callShape.outputTokens}
+                onChange={(ev) => setCallShape(callShape.inputTokens, Number(ev.target.value))}
+                className="mt-1 w-full accent-[var(--color-sky)]"
+                aria-label={t.arena.payloadOutput}
+              />
+              {/* The three numbers that move together, derived live. */}
+              <p className="mt-2 font-mono text-[10px] text-[var(--color-sky-soft)]">
+                {t.arena.payloadDerived(
+                  Math.round(llmBaseCapacityFor(callShape)).toLocaleString(locale),
+                  llmCostPerCallUsd(callShape).toFixed(4),
+                )}
+              </p>
+            </div>
+          )}
+        </div>
+
         {/* 103 — the two architect readouts, derived from the same pure model. */}
         {nodes.length > 0 && (
-          <div className="flex items-center gap-3 whitespace-nowrap text-[10.5px] text-[var(--color-muted)]">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 whitespace-nowrap text-[10.5px] text-[var(--color-muted)]">
             {totalShed > 0 ? (
               // 108 AC1/AC2 — one story per screen: the node box already shows "—"
               // for a shedding node; the header must not price the queue either.

@@ -7,6 +7,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useT } from "../i18n";
 import { formatLatency, formatQps } from "./format";
 import type { NodeStatus } from "./model";
+import { useArena } from "./store";
 
 export interface ArenaNodeData extends Record<string, unknown> {
   label: string;
@@ -21,6 +22,16 @@ export interface ArenaNodeData extends Record<string, unknown> {
   scaled: boolean; // size !== medium || replicas > 1 — show a badge
   /** 106 — region annotation shown as a badge (multi-region pools at a glance). */
   region?: string;
+  /** 118 — held streams (113) vs the container budget; null when unbudgeted or
+   *  the awaited path sheds (no honest figure). */
+  held?: number | null;
+  budget?: number | null;
+  /** 118 — held > budget: the connection wall (independent of QPS utilization). */
+  connectionWall?: boolean;
+  /** 119 — the loaded sample's explanation bubble for THIS node (resolved lang). */
+  callout?: string;
+  /** 120 — the user's own note on this box (shows a 📝 marker + tooltip). */
+  note?: string;
 }
 
 const STATUS_COLOR: Record<NodeStatus, string> = {
@@ -38,7 +49,7 @@ export function ArenaNode({ data, selected }: NodeProps) {
 
   return (
     <div
-      className="min-w-[150px] rounded-xl border bg-[var(--color-panel)] px-3 py-2 text-[var(--color-ink)] shadow-sm transition"
+      className="relative min-w-[150px] rounded-xl border bg-[var(--color-panel)] px-3 py-2 text-[var(--color-ink)] shadow-sm transition"
       style={{
         borderColor: d.bottleneck
           ? "var(--color-rose)"
@@ -48,6 +59,25 @@ export function ArenaNode({ data, selected }: NodeProps) {
         boxShadow: d.bottleneck ? "0 0 0 2px color-mix(in srgb, var(--color-rose) 45%, transparent)" : undefined,
       }}
     >
+      {/* 119 — the loaded sample's explanation bubble, anchored above the box
+          (it moves with drags for free). ✕ hides ALL bubbles for this sample. */}
+      {d.callout && (
+        <div className="absolute -top-2 left-1/2 w-56 -translate-x-1/2 -translate-y-full rounded-lg border border-[var(--color-sky)] bg-[var(--color-panel)] p-2 pr-6 text-[9.5px] leading-snug text-[var(--color-text-soft)] shadow-md">
+          <button
+            aria-label={t.arena.calloutHide}
+            title={t.arena.calloutHide}
+            onClick={(ev) => {
+              ev.stopPropagation();
+              useArena.getState().hideCallouts();
+            }}
+            className="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded text-[9px] text-[var(--color-muted)] transition hover:text-[var(--color-ink)]"
+          >
+            ✕
+          </button>
+          {d.callout}
+        </div>
+      )}
+
       {/* 107 — wiring is the core gesture: handles are enlarged (14px + ring)
           and grow on hover so grabbing a connection is forgiving. */}
       <Handle
@@ -63,12 +93,20 @@ export function ArenaNode({ data, selected }: NodeProps) {
       />
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-[12px] font-semibold">{d.label}</span>
-        <span
-          className="h-2 w-2 shrink-0 rounded-full"
-          style={{ background: color }}
-          aria-label={t.arena.status[d.status]}
-          title={t.arena.status[d.status]}
-        />
+        <div className="flex shrink-0 items-center gap-1">
+          {/* 120 — a note marker: the box carries the architect's justification. */}
+          {d.note && (
+            <span className="text-[10px] leading-none" aria-label={t.arena.noteLabel} title={d.note}>
+              📝
+            </span>
+          )}
+          <span
+            className="h-2 w-2 rounded-full"
+            style={{ background: color }}
+            aria-label={t.arena.status[d.status]}
+            title={t.arena.status[d.status]}
+          />
+        </div>
       </div>
 
       {(d.replicas > 1 || d.region) && (
@@ -102,6 +140,21 @@ export function ArenaNode({ data, selected }: NodeProps) {
         <dd className="text-right font-mono" style={{ color }}>
           {pct}%
         </dd>
+        {/* 118 — held streams vs the container budget, on the face: the wall
+            that fells agent backends while their QPS reads green. */}
+        {d.budget != null && (
+          <>
+            <dt className="text-[var(--color-muted)]" title={t.arena.inflightBudgetHint}>
+              {t.arena.metric.inflight}
+            </dt>
+            <dd
+              className="text-right font-mono"
+              style={{ color: d.connectionWall ? "var(--color-rose)" : undefined }}
+            >
+              {d.held == null ? "—" : `~${formatQps(d.held)} / ${formatQps(d.budget)}`}
+            </dd>
+          </>
+        )}
       </dl>
 
       {/* Utilization meter — visually saturates and turns critical past 100%. */}
@@ -117,6 +170,16 @@ export function ArenaNode({ data, selected }: NodeProps) {
           {t.arena.bottleneck}
           <div className="font-mono text-[8.5px] font-normal normal-case tracking-normal">
             {t.arena.shedding(formatQps(d.shedRps))}
+          </div>
+        </div>
+      )}
+
+      {/* 118 — the connection wall names ITS failure mode: streams, not QPS. */}
+      {d.connectionWall && d.held != null && (
+        <div className="mt-1 text-center text-[9px] font-semibold uppercase tracking-wide text-[var(--color-rose)]">
+          {t.arena.connectionWall}
+          <div className="font-mono text-[8.5px] font-normal normal-case tracking-normal">
+            {t.arena.connectionWallDetail(formatQps(d.held))}
           </div>
         </div>
       )}

@@ -3,7 +3,15 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_EXAMPLE_ID, EXAMPLES, defaultDesign } from "./examples";
-import { computeMetrics, equilibriumRps, routingTaxFor, rpsOf } from "./model";
+import {
+  computeMetrics,
+  concurrencyBudgetFor,
+  concurrencyPressure,
+  equilibriumRps,
+  heldInFlight,
+  routingTaxFor,
+  rpsOf,
+} from "./model";
 
 const byId = (id: string) => EXAMPLES.find((e) => e.id === id)!;
 const loadOf = (d: { users: number; thinkTimeSec: number }) => rpsOf(d.users, d.thinkTimeSec);
@@ -158,5 +166,103 @@ describe("103 AC7 — defensible presets", () => {
     const rps = loadOf(d);
     const m = computeMetrics(d, rps);
     expect(m.get(llm.id)!.arriving).toBeGreaterThan(rps);
+  });
+});
+
+// --- 116-arena-openai-calibration ----------------------------------------------
+
+describe("US-region defaults + realistic fleets (116 AC4/AC6)", () => {
+  it("every preset node except the client declares a US region", () => {
+    for (const ex of EXAMPLES) {
+      for (const node of ex.build().nodes) {
+        if (node.kind === "client") {
+          expect(node.region, `${ex.id}/${node.id} client has no region`).toBeUndefined();
+        } else {
+          expect(node.region, `${ex.id}/${node.id} region`).toMatch(/^us-/);
+        }
+      }
+    }
+  });
+
+  it("no preset needs an absurd fleet — every LLM pool is ≤ 6 deployments", () => {
+    for (const ex of EXAMPLES) {
+      for (const llm of ex.build().nodes.filter((n) => n.kind === "llm")) {
+        expect(llm.replicas, `${ex.id}/${llm.id} deployments`).toBeLessThanOrEqual(6);
+      }
+    }
+  });
+});
+
+describe("regional-quota lesson pair (116 AC5)", () => {
+  it("two pools stacked in one region share the quota: squeezed and shedding (critical)", () => {
+    const d = byId("regional-quota").build();
+    const m = computeMetrics({ nodes: d.nodes, edges: d.edges }, loadOf(d));
+    const pools = d.nodes.filter((n) => n.kind === "llm");
+    expect(pools).toHaveLength(2);
+    expect(new Set(pools.map((n) => n.region)).size).toBe(1); // both in us-east
+    for (const p of pools) {
+      const llm = m.get(p.id)!;
+      expect(llm.quotaFactor, `${p.id} squeezed`).toBeLessThan(1); // the regional cap bites
+      expect(llm.shedRps, `${p.id} sheds`).toBeGreaterThan(0); // honest 429s
+      expect(llm.status, `${p.id} critical`).toBe("critical");
+    }
+  });
+
+  it("the same fleet split across two US regions serves the same demand healthily", () => {
+    const bite = byId("regional-quota").build();
+    const escape = byId("multi-region").build();
+    // Same load story, same total deployments — the ONLY move is the split.
+    expect(escape.users).toBe(bite.users);
+    expect(escape.thinkTimeSec).toBe(bite.thinkTimeSec);
+    const total = (d: typeof bite) =>
+      d.nodes.filter((n) => n.kind === "llm").reduce((s, n) => s + n.replicas, 0);
+    expect(total(escape)).toBe(total(bite));
+
+    const pools = escape.nodes.filter((n) => n.kind === "llm");
+    expect(new Set(pools.map((n) => n.region)).size).toBe(pools.length); // distinct US regions
+    const m = computeMetrics({ nodes: escape.nodes, edges: escape.edges }, loadOf(escape));
+    for (const p of pools) {
+      expect(m.get(p.id)!.quotaFactor, `${p.id} under quota`).toBe(1);
+      expect(m.get(p.id)!.status, `${p.id} healthy`).toBe("healthy");
+    }
+  });
+});
+
+// --- 118-arena-backend-concurrency ------------------------------------------------
+
+describe("presets stay under the backend stream budget (118 AC5)", () => {
+  it("every llm-healthy preset's backend holds < 70% of its connection budget at equilibrium", () => {
+    for (const ex of EXAMPLES) {
+      if (ex.claims.llm !== "healthy") continue;
+      const d = ex.build();
+      const design = { nodes: d.nodes, edges: d.edges };
+      const eq = equilibriumRps(design, d.users, d.thinkTimeSec);
+      const held = heldInFlight(design, eq);
+      for (const be of d.nodes.filter((sp) => sp.kind === "backend")) {
+        const h = held.get(be.id);
+        const budget = concurrencyBudgetFor(be)!;
+        expect(h, `${ex.id}/${be.id} held is a number`).not.toBeNull();
+        const pressure = concurrencyPressure(h!, budget)!;
+        expect(pressure, `${ex.id}/${be.id} pressure ${pressure.toFixed(2)}`).toBeLessThan(0.7);
+      }
+    }
+  });
+});
+
+// --- 119-arena-example-callouts ----------------------------------------------------
+
+describe("node-anchored callouts on every preset (119 AC1)", () => {
+  it("every preset ships ≥2 bilingual callouts anchored to real node ids", () => {
+    for (const ex of EXAMPLES) {
+      expect(ex.callouts.length, `${ex.id} has callouts`).toBeGreaterThanOrEqual(2);
+      const ids = new Set(ex.build().nodes.map((n) => n.id));
+      for (const c of ex.callouts) {
+        expect(ids.has(c.nodeId), `${ex.id} anchors "${c.nodeId}"`).toBe(true);
+        expect(c.text.en.trim(), `${ex.id}/${c.nodeId} en`).toBeTruthy();
+        expect(c.text.pt.trim(), `${ex.id}/${c.nodeId} pt`).toBeTruthy();
+      }
+      // at most one callout per node — bubbles must not stack.
+      expect(new Set(ex.callouts.map((c) => c.nodeId)).size).toBe(ex.callouts.length);
+    }
   });
 });

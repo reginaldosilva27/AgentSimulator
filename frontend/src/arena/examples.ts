@@ -16,7 +16,7 @@
 // simple-vs-scaled claim and the fleet's survival via computeMetrics.
 
 import type { Lang } from "../i18n";
-import { DEFAULT_HIT_RATIO } from "./components";
+import { DEFAULT_CALL_SHAPE, DEFAULT_HIT_RATIO } from "./components";
 import { equilibriumRps, type ArenaEdge } from "./model";
 import type { ArenaNode, ArenaState } from "./store";
 
@@ -28,10 +28,15 @@ export interface ArenaExample {
    *  copy cites and the LLM tier's open-loop status at that demand. A test walks
    *  every preset and asserts these against the model, so copy can't go stale. */
   claims: { demandRps: number; llm: "healthy" | "warning" | "critical" };
+  /** 119 — node-anchored explanation bubbles shown while this preset is loaded
+   *  (≥2 per preset, one per node max; texts state MECHANISMS, not pinned
+   *  figures, so future recalibrations don't stale them). */
+  callouts: Array<{ nodeId: string; text: Record<Lang, string> }>;
   build: () => Pick<ArenaState, "nodes" | "edges" | "users" | "thinkTimeSec">;
 }
 
-/** Terse node factory: kind + position + optional scaling overrides. */
+/** Terse node factory: kind + position + optional scaling overrides. 116 — every
+ *  infrastructure node defaults to East US (the client is the users, no region). */
 function node(
   id: string,
   kind: ArenaNode["kind"],
@@ -39,7 +44,8 @@ function node(
   y: number,
   extra: Partial<ArenaNode> = {},
 ): ArenaNode {
-  return { id, kind, size: "medium", replicas: 1, x, y, ...extra };
+  const region = kind === "client" ? {} : { region: "us-east" as const };
+  return { id, kind, size: "medium", replicas: 1, x, y, ...region, ...extra };
 }
 const edge = (source: string, target: string): ArenaEdge => ({
   id: `${source}-${target}`,
@@ -53,14 +59,37 @@ const ROW = 150; // vertical spacing between branches
 export const EXAMPLES: ArenaExample[] = [
   {
     id: "simple-rag",
-    claims: { demandRps: 300, llm: "critical" },
+    claims: { demandRps: 800, llm: "critical" },
     title: { en: "Simple RAG agent", pt: "Agente RAG simples" },
     description: {
-      en: "6k users, 1 msg/20s (≈300 req/s). Each turn makes 2 LLM calls — one deployment saturates instantly: the agent's wall.",
-      pt: "6 mil usuários, 1 msg/20s (≈300 req/s). Cada turno faz 2 chamadas de LLM — um deployment satura na hora: a parede do agente.",
+      en: "16k users, 1 msg/20s (≈800 req/s). Each turn makes 2 LLM calls — one medium deployment (~150 calls/s of quota) saturates: the agent's wall.",
+      pt: "16 mil usuários, 1 msg/20s (≈800 req/s). Cada turno faz 2 chamadas de LLM — um deployment médio (~150 chamadas/s de cota) satura: a parede do agente.",
     },
+    callouts: [
+      {
+        nodeId: "client",
+        text: {
+          en: "16k users each sending 1 msg every 20s offer ≈800 req/s — Little's Law: users ÷ think time. Users and req/s are different units.",
+          pt: "16 mil usuários mandando 1 msg a cada 20s ofertam ≈800 req/s — Lei de Little: usuários ÷ tempo entre mensagens. Usuários e req/s são unidades diferentes.",
+        },
+      },
+      {
+        nodeId: "llm",
+        text: {
+          en: "Each agent turn makes 2 model calls, and one deployment is a rate-limit quota block — the demand crushes it: THE wall agents hit first. Red = shedding 429s.",
+          pt: "Cada turno do agente faz 2 chamadas ao modelo, e um deployment é um bloco de cota de rate limit — a demanda o esmaga: A parede que agentes batem primeiro. Vermelho = derrubando 429s.",
+        },
+      },
+      {
+        nodeId: "vectorDb",
+        text: {
+          en: "Retrieval is cheap next to the model: the vector DB idles while the LLM chokes. Scaling THIS box would fix nothing.",
+          pt: "A recuperação é barata perto do modelo: o vector DB fica ocioso enquanto o LLM engasga. Escalar ESTA caixa não resolveria nada.",
+        },
+      },
+    ],
     build: () => ({
-      users: 6_000,
+      users: 16_000,
       thinkTimeSec: 20,
       nodes: [
         node("client", "client", 0, ROW),
@@ -73,19 +102,37 @@ export const EXAMPLES: ArenaExample[] = [
   },
   {
     id: "scale-llm",
-    claims: { demandRps: 300, llm: "healthy" },
+    claims: { demandRps: 800, llm: "healthy" },
     title: { en: "Scale the LLM", pt: "Escalar o LLM" },
     description: {
-      en: "Same 300 req/s, but the LLM runs 20 deployments (replicas) — the bottleneck clears. Horizontal scale is the lever.",
-      pt: "Os mesmos 300 req/s, mas o LLM roda 20 deployments (réplicas) — o gargalo some. Escala horizontal é a alavanca.",
+      en: "Same 800 req/s, but the pool runs 4 XLarge deployments (a top quota tier, ×4) — the bottleneck clears. Quota tier × deployments is the lever.",
+      pt: "Os mesmos 800 req/s, mas o pool roda 4 deployments XLarge (tier de cota alto, ×4) — o gargalo some. Tier de cota × deployments é a alavanca.",
     },
+    callouts: [
+      {
+        nodeId: "llm",
+        text: {
+          en: "The lever: quota tier × deployments. 4 XLarge deployments multiply the pool's calls/s and the wall clears — same demand, no red.",
+          pt: "A alavanca: tier de cota × deployments. 4 deployments XLarge multiplicam as chamadas/s do pool e a parede some — mesma demanda, sem vermelho.",
+        },
+      },
+      {
+        nodeId: "backend",
+        text: {
+          en: "2 containers, and NOT for CPU: every user holds a connection/SSE stream open for the whole multi-second turn — held streams size an agent backend.",
+          pt: "2 containers, e NÃO por CPU: cada usuário segura uma conexão/stream SSE aberta o turno inteiro de vários segundos — streams seguradas dimensionam um backend de agente.",
+        },
+      },
+    ],
     build: () => ({
-      users: 6_000,
+      users: 16_000,
       thinkTimeSec: 20,
       nodes: [
         node("client", "client", 0, ROW),
-        node("backend", "backend", COL, ROW),
-        node("llm", "llm", COL * 2, 0, { callsPerRequest: 2, replicas: 20 }),
+        // 118 — 2 containers: at ~675 req/s of ~3.7s turns the backend HOLDS
+        // ~2.5k streams — the connection budget, not CPU, sizes it.
+        node("backend", "backend", COL, ROW, { replicas: 2 }),
+        node("llm", "llm", COL * 2, 0, { callsPerRequest: 2, size: "xlarge", replicas: 4 }),
         node("vectorDb", "vectorDb", COL * 2, ROW * 2),
       ],
       edges: [edge("client", "backend"), edge("backend", "llm"), edge("backend", "vectorDb")],
@@ -99,6 +146,29 @@ export const EXAMPLES: ArenaExample[] = [
       en: "An API gateway fronts the POST path (a CDN would bypass it) and a cache serves repeat retrievals — only misses reach the vector DB.",
       pt: "Um API gateway na frente do caminho POST (um CDN daria bypass) e um cache serve leituras repetidas — só as falhas chegam ao vector DB.",
     },
+    callouts: [
+      {
+        nodeId: "apigw",
+        text: {
+          en: "The managed front door: auth, quotas, rate limiting. A CDN would NOT help here — it bypasses dynamic POST calls like chat.",
+          pt: "A porta de entrada gerenciada: auth, cotas, rate limiting. Um CDN NÃO ajudaria aqui — ele dá bypass em POSTs dinâmicos como o chat.",
+        },
+      },
+      {
+        nodeId: "cache",
+        text: {
+          en: "Repeat retrievals are served here; only the miss fraction continues. Raising the hit ratio is often cheaper than scaling the database behind it.",
+          pt: "Leituras repetidas são servidas aqui; só a fração de misses segue adiante. Subir a taxa de acerto costuma sair mais barato que escalar o banco atrás.",
+        },
+      },
+      {
+        nodeId: "llm",
+        text: {
+          en: "4 deployments absorb 2 calls per turn comfortably — watch utilization here first when you raise the users slider.",
+          pt: "4 deployments absorvem 2 chamadas por turno com folga — observe a utilização aqui primeiro ao subir o slider de usuários.",
+        },
+      },
+    ],
     build: () => ({
       users: 4_000,
       thinkTimeSec: 20,
@@ -106,7 +176,7 @@ export const EXAMPLES: ArenaExample[] = [
         node("client", "client", 0, ROW),
         node("apigw", "apiGateway", COL, ROW),
         node("backend", "backend", COL * 2, ROW),
-        node("llm", "llm", COL * 3, 0, { callsPerRequest: 2, replicas: 12 }),
+        node("llm", "llm", COL * 3, 0, { callsPerRequest: 2, replicas: 4 }),
         node("cache", "cache", COL * 3, ROW * 2, { hitRatio: DEFAULT_HIT_RATIO }),
         node("vectorDb", "vectorDb", COL * 4, ROW * 2),
       ],
@@ -127,13 +197,36 @@ export const EXAMPLES: ArenaExample[] = [
       en: "The ReAct loop multiplies internal traffic: 100 user req/s become 300 LLM calls and 200 tool calls per second.",
       pt: "O loop ReAct multiplica o tráfego interno: 100 req/s de usuários viram 300 chamadas de LLM e 200 de tools por segundo.",
     },
+    callouts: [
+      {
+        nodeId: "llm",
+        text: {
+          en: "The ReAct loop multiplies traffic: ×3 calls per request means 100 user req/s arrive here as 300 calls/s.",
+          pt: "O loop ReAct multiplica o tráfego: ×3 chamadas por request significa que 100 req/s de usuários chegam aqui como 300 chamadas/s.",
+        },
+      },
+      {
+        nodeId: "mcp",
+        text: {
+          en: "Tools are hit twice per turn — external APIs and functions carry agent fan-out too, not just the model.",
+          pt: "As tools são chamadas duas vezes por turno — APIs externas e functions também carregam o fan-out do agente, não só o modelo.",
+        },
+      },
+      {
+        nodeId: "vectorDb",
+        text: {
+          en: "Two retrievals per turn: the agent re-searches after reasoning. Internal traffic ≫ user traffic is the agent signature.",
+          pt: "Duas recuperações por turno: o agente busca de novo depois de raciocinar. Tráfego interno ≫ tráfego de usuário é a assinatura do agente.",
+        },
+      },
+    ],
     build: () => ({
       users: 2_000,
       thinkTimeSec: 20,
       nodes: [
         node("client", "client", 0, ROW),
         node("backend", "backend", COL, ROW),
-        node("llm", "llm", COL * 2, 0, { callsPerRequest: 3, replicas: 10 }),
+        node("llm", "llm", COL * 2, 0, { callsPerRequest: 3, replicas: 3 }),
         node("mcp", "mcp", COL * 2, ROW * 1.4, { callsPerRequest: 2 }),
         node("vectorDb", "vectorDb", COL * 2, ROW * 2.6, { callsPerRequest: 2 }),
       ],
@@ -147,21 +240,37 @@ export const EXAMPLES: ArenaExample[] = [
   },
   {
     id: "semantic-cache",
-    claims: { demandRps: 380, llm: "healthy" },
+    claims: { demandRps: 420, llm: "healthy" },
     title: { en: "Semantic cache shields the fleet", pt: "Cache semântico protege a frota" },
     description: {
-      en: "7.6k users (≈380 req/s), 2 LLM calls/turn. A semantic cache answering ~30% of repeated questions is what keeps 16 deployments healthy — remove it and the same fleet saturates.",
-      pt: "7,6 mil usuários (≈380 req/s), 2 chamadas de LLM por turno. Um cache semântico respondendo ~30% das perguntas repetidas é o que mantém 16 deployments saudáveis — sem ele, a mesma frota satura.",
+      en: "8.4k users (≈420 req/s), 2 LLM calls/turn. A semantic cache answering ~30% of repeated questions is what keeps 6 deployments healthy — remove it and the same fleet saturates.",
+      pt: "8,4 mil usuários (≈420 req/s), 2 chamadas de LLM por turno. Um cache semântico respondendo ~30% das perguntas repetidas é o que mantém 6 deployments saudáveis — sem ele, a mesma frota satura.",
     },
+    callouts: [
+      {
+        nodeId: "semcache",
+        text: {
+          en: "Answers by embedding similarity: hits skip the model ENTIRELY. Honest hit rates are modest (~20–30%), and a loose threshold can serve a similar-but-WRONG answer.",
+          pt: "Responde por similaridade de embeddings: acertos pulam o modelo POR COMPLETO. Taxas honestas são modestas (~20–30%), e um limiar frouxo pode servir uma resposta parecida porém ERRADA.",
+        },
+      },
+      {
+        nodeId: "llm",
+        text: {
+          en: "Only the ~70% misses reach this fleet — that shave is what keeps it healthy. Remove the cache and the same 6 deployments saturate.",
+          pt: "Só os ~70% de misses chegam a esta frota — esse corte é o que a mantém saudável. Remova o cache e os mesmos 6 deployments saturam.",
+        },
+      },
+    ],
     build: () => ({
-      users: 7_600,
+      users: 8_400,
       thinkTimeSec: 20,
       nodes: [
         node("client", "client", 0, ROW),
         node("backend", "backend", COL, ROW),
         // The third lever (112): hits skip the model entirely; only misses go on.
         node("semcache", "semanticCache", COL * 2, 0, { hitRatio: 0.3 }),
-        node("llm", "llm", COL * 3, 0, { callsPerRequest: 2, replicas: 16 }),
+        node("llm", "llm", COL * 3, 0, { callsPerRequest: 2, replicas: 6 }),
         node("vectorDb", "vectorDb", COL * 2, ROW * 2),
       ],
       edges: [
@@ -180,6 +289,29 @@ export const EXAMPLES: ArenaExample[] = [
       en: "12k users (≈600 req/s) through gateway + LB, replicated backend, an AI Gateway routing 2 LLM pools, cache + vector DB.",
       pt: "12 mil usuários (≈600 req/s) por gateway + LB, backend replicado, AI Gateway roteando 2 pools de LLM, cache + vector DB.",
     },
+    callouts: [
+      {
+        nodeId: "aigw",
+        text: {
+          en: "The LLM router: splits calls across the pools behind it, so their quotas ADD UP. Its QPS reads ~2× the backend's because each turn makes 2 model calls.",
+          pt: "O roteador de LLM: divide as chamadas entre os pools atrás dele, então as cotas SOMAM. O QPS aqui lê ~2× o do backend porque cada turno faz 2 chamadas ao modelo.",
+        },
+      },
+      {
+        nodeId: "llm2",
+        text: {
+          en: "A separate box = a separate pool: different region, its own quota and failure domain. The gateway fails over between them.",
+          pt: "Uma caixa separada = um pool separado: outra região, cota e domínio de falha próprios. O gateway faz failover entre eles.",
+        },
+      },
+      {
+        nodeId: "backend",
+        text: {
+          en: "Replicated behind the LB — but check its In-flight row, not just CPU: it holds every user's stream for the whole turn.",
+          pt: "Replicado atrás do LB — mas olhe a linha In-flight, não só a CPU: ele segura o stream de cada usuário o turno inteiro.",
+        },
+      },
+    ],
     build: () => ({
       users: 12_000,
       thinkTimeSec: 20,
@@ -189,10 +321,10 @@ export const EXAMPLES: ArenaExample[] = [
         node("lb", "loadBalancer", COL * 2, ROW),
         node("backend", "backend", COL * 3, ROW, { replicas: 2 }),
         node("aigw", "aiGateway", COL * 4, ROW * 0.4, { callsPerRequest: 2 }),
-        // Two POOLS in different regions (106) — same capacity as one box ×20;
-        // the split is resilience/latency intent, which the gateway routes across.
-        node("llm1", "llm", COL * 5, 0, { size: "large", replicas: 10, region: "us-east" }),
-        node("llm2", "llm", COL * 5, ROW, { size: "large", replicas: 10, region: "eu-west" }),
+        // Two POOLS in different US regions (106/116) — the split is resilience/
+        // latency intent, which the gateway routes across.
+        node("llm1", "llm", COL * 5, 0, { size: "large", replicas: 3, region: "us-east" }),
+        node("llm2", "llm", COL * 5, ROW, { size: "large", replicas: 3, region: "us-west" }),
         node("cache", "cache", COL * 4, ROW * 2, { hitRatio: DEFAULT_HIT_RATIO }),
         node("vectorDb", "vectorDb", COL * 5, ROW * 2.4),
       ],
@@ -213,21 +345,53 @@ export const EXAMPLES: ArenaExample[] = [
     claims: { demandRps: 1667, llm: "healthy" },
     title: { en: "100k users", pt: "100 mil usuários" },
     description: {
-      en: "100k concurrent users at 1 msg/min ≈ 1,667 req/s (Little's Law). An AI Gateway spreads ~3,300 LLM calls/s across a fleet of 4 pools × 6 XLarge deployments.",
-      pt: "100 mil usuários simultâneos a 1 msg/min ≈ 1.667 req/s (Lei de Little). Um AI Gateway espalha ~3.300 chamadas de LLM/s por uma frota de 4 pools × 6 deployments XLarge.",
+      en: "100k concurrent users at 1 msg/min ≈ 1,667 req/s (Little's Law). An AI Gateway spreads ~3,300 LLM calls/s across a fleet of 4 pools × 2 XLarge deployments in 4 US regions.",
+      pt: "100 mil usuários simultâneos a 1 msg/min ≈ 1.667 req/s (Lei de Little). Um AI Gateway espalha ~3.300 chamadas de LLM/s por uma frota de 4 pools × 2 deployments XLarge em 4 regiões dos EUA.",
     },
+    callouts: [
+      {
+        nodeId: "client",
+        text: {
+          en: "100k concurrent users at 1 msg/min ≈ 1,667 req/s — Little's Law is what makes '100k users' servable at all.",
+          pt: "100 mil usuários simultâneos a 1 msg/min ≈ 1.667 req/s — a Lei de Little é o que torna '100 mil usuários' atendíveis.",
+        },
+      },
+      {
+        nodeId: "aigw",
+        text: {
+          en: "One endpoint, four pools: the gateway spreads ~2× the user rate in model calls across the fleet, and their regional quotas add up.",
+          pt: "Um endpoint, quatro pools: o gateway espalha ~2× a taxa de usuários em chamadas de modelo pela frota, e as cotas regionais somam.",
+        },
+      },
+      {
+        nodeId: "backend",
+        text: {
+          en: "6 containers at single-digit CPU: thousands of held SSE streams (In-flight row) — memory and connections, not CPU, size agent backends.",
+          pt: "6 containers com CPU de um dígito: milhares de streams SSE seguradas (linha In-flight) — memória e conexões, não CPU, dimensionam backends de agente.",
+        },
+      },
+      {
+        nodeId: "llm3",
+        text: {
+          en: "Four US regions = four separate quota budgets. Stack all 8 deployments in one region and the regional cap would squeeze them.",
+          pt: "Quatro regiões dos EUA = quatro orçamentos de cota separados. Empilhe os 8 deployments numa região só e a cota regional os apertaria.",
+        },
+      },
+    ],
     build: () => ({
       users: 100_000,
       thinkTimeSec: 60,
       nodes: [
         node("client", "client", 0, ROW * 1.5),
-        node("backend", "backend", COL, ROW * 1.5, { replicas: 3 }),
+        // 118 — 6 containers at ~5% CPU: held streams (~7.4k across ~4.8s
+        // turns), not QPS, size an agent backend.
+        node("backend", "backend", COL, ROW * 1.5, { replicas: 6 }),
         node("aigw", "aiGateway", COL * 2, ROW * 1.5, { callsPerRequest: 2 }),
-        // Four POOLS across four regions (106) — the fleet the gateway routes.
-        node("llm1", "llm", COL * 3, 0, { size: "xlarge", replicas: 6, region: "us-east" }),
-        node("llm2", "llm", COL * 3, ROW, { size: "xlarge", replicas: 6, region: "us-west" }),
-        node("llm3", "llm", COL * 3, ROW * 2, { size: "xlarge", replicas: 6, region: "eu-west" }),
-        node("llm4", "llm", COL * 3, ROW * 3, { size: "xlarge", replicas: 6, region: "sa-east" }),
+        // Four POOLS across four US regions (106/116) — the fleet the gateway routes.
+        node("llm1", "llm", COL * 3, 0, { size: "xlarge", replicas: 2, region: "us-east" }),
+        node("llm2", "llm", COL * 3, ROW, { size: "xlarge", replicas: 2, region: "us-east-2" }),
+        node("llm3", "llm", COL * 3, ROW * 2, { size: "xlarge", replicas: 2, region: "us-central" }),
+        node("llm4", "llm", COL * 3, ROW * 3, { size: "xlarge", replicas: 2, region: "us-west" }),
         node("cache", "cache", COL * 2, ROW * 3.2, { hitRatio: DEFAULT_HIT_RATIO }),
         node("vectorDb", "vectorDb", COL * 3, ROW * 4.2, { replicas: 2 }),
       ],
@@ -240,6 +404,99 @@ export const EXAMPLES: ArenaExample[] = [
         edge("aigw", "llm4"),
         edge("backend", "cache"),
         edge("cache", "vectorDb"),
+      ],
+    }),
+  },
+  {
+    // 116 AC5 — the quota lesson, part 1: two pools STACKED in one region share
+    // the regional quota (subscription-level, not per-deployment) — provisioned
+    // 4,800 calls/s of raw capacity, capped at 3,000, shedding under 3,200.
+    id: "regional-quota",
+    claims: { demandRps: 1600, llm: "critical" },
+    title: { en: "Regional quota bites", pt: "A cota regional aperta" },
+    description: {
+      en: "32k users (≈1,600 req/s → 3,200 LLM calls/s). Both pools sit in us-east, so their quotas DON'T add up — the region caps them and requests shed as 429s.",
+      pt: "32 mil usuários (≈1.600 req/s → 3.200 chamadas de LLM/s). Os dois pools estão em us-east, então as cotas NÃO somam — a região limita os dois e requests caem como 429.",
+    },
+    callouts: [
+      {
+        nodeId: "llm1",
+        text: {
+          en: "Both pools sit in us-east, and the quota is per REGION (subscription-level TPM): provisioned capacity above the cap simply doesn't exist — both squeeze and shed 429s.",
+          pt: "Os dois pools estão em us-east, e a cota é por REGIÃO (TPM da assinatura): capacidade provisionada acima do teto simplesmente não existe — ambos são apertados e derrubam 429s.",
+        },
+      },
+      {
+        nodeId: "aigw",
+        text: {
+          en: "The router can't create capacity the region won't grant — splitting load between two capped pools doesn't help.",
+          pt: "O roteador não cria capacidade que a região não concede — dividir a carga entre dois pools limitados não ajuda.",
+        },
+      },
+    ],
+    build: () => ({
+      users: 32_000,
+      thinkTimeSec: 20,
+      nodes: [
+        node("client", "client", 0, ROW),
+        // 118 — 4 containers (same as the multi-region twin: the ONLY move
+        // between the pair is the region split).
+        node("backend", "backend", COL, ROW, { replicas: 4 }),
+        node("aigw", "aiGateway", COL * 2, ROW, { callsPerRequest: 2 }),
+        // Same subscription, same region — the quota pool is shared.
+        node("llm1", "llm", COL * 3, ROW * 0.3, { size: "xlarge", replicas: 4 }),
+        node("llm2", "llm", COL * 3, ROW * 1.7, { size: "xlarge", replicas: 4 }),
+      ],
+      edges: [
+        edge("client", "backend"),
+        edge("backend", "aigw"),
+        edge("aigw", "llm1"),
+        edge("aigw", "llm2"),
+      ],
+    }),
+  },
+  {
+    // 116 AC5 — part 2: the SAME 8 deployments, same demand — moving one pool to
+    // us-west gives each pool its own regional quota and the shedding stops.
+    id: "multi-region",
+    claims: { demandRps: 1600, llm: "healthy" },
+    title: { en: "Escape across regions", pt: "Escapar por regiões" },
+    description: {
+      en: "Same 32k users, same 8 deployments — one pool moved to us-west. Each region now has its own quota headroom: no 429s, the fleet breathes.",
+      pt: "Os mesmos 32 mil usuários, os mesmos 8 deployments — um pool movido para us-west. Cada região agora tem sua própria folga de cota: sem 429, a frota respira.",
+    },
+    callouts: [
+      {
+        nodeId: "llm2",
+        text: {
+          en: "The ONLY change vs the previous preset: this pool moved to us-west, earning its own regional quota — the same 8 deployments now breathe.",
+          pt: "A ÚNICA mudança vs o preset anterior: este pool foi para us-west, ganhando sua própria cota regional — os mesmos 8 deployments agora respiram.",
+        },
+      },
+      {
+        nodeId: "llm1",
+        text: {
+          en: "Alone in us-east, comfortably under the regional cap. Spreading regions is how real fleets escape quota walls.",
+          pt: "Sozinho em us-east, com folga sob o teto regional. Espalhar regiões é como frotas reais escapam de paredes de cota.",
+        },
+      },
+    ],
+    build: () => ({
+      users: 32_000,
+      thinkTimeSec: 20,
+      nodes: [
+        node("client", "client", 0, ROW),
+        // 118 — ~1.3k req/s of ~4s turns ≈ 5.2k held streams → 4 containers.
+        node("backend", "backend", COL, ROW, { replicas: 4 }),
+        node("aigw", "aiGateway", COL * 2, ROW, { callsPerRequest: 2 }),
+        node("llm1", "llm", COL * 3, ROW * 0.3, { size: "xlarge", replicas: 4 }),
+        node("llm2", "llm", COL * 3, ROW * 1.7, { size: "xlarge", replicas: 4, region: "us-west" }),
+      ],
+      edges: [
+        edge("client", "backend"),
+        edge("backend", "aigw"),
+        edge("aigw", "llm1"),
+        edge("aigw", "llm2"),
       ],
     }),
   },
@@ -258,5 +515,6 @@ export function defaultDesign(): ArenaState {
       equilibriumRps({ nodes: d.nodes, edges: d.edges }, d.users, d.thinkTimeSec),
     ),
     dismissedNudges: [],
+    callShape: DEFAULT_CALL_SHAPE,
   };
 }

@@ -6,9 +6,9 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { UI } from "../i18n/strings";
-import { ScalePanel } from "./ArenaCanvas";
+import { EdgePanel, ScalePanel } from "./ArenaCanvas";
 import { KIND_META } from "./components";
-import { useArena } from "./store";
+import { NOTE_MAX, useArena } from "./store";
 
 beforeEach(() => {
   localStorage.clear();
@@ -17,8 +17,10 @@ beforeEach(() => {
       { id: "llm-1", kind: "llm", size: "medium", replicas: 1, x: 0, y: 0 },
       { id: "client-1", kind: "client", size: "medium", replicas: 1, x: 0, y: 100 },
       // 105 — a backend holding 20 LLM deployment endpoints directly (taxed).
+      // 116 — llm-2 gets its own region so its pool (medium ×20 = 3,000 = the
+      // quota, exactly) is not squeezed by sharing the implicit pool with llm-1.
       { id: "be-1", kind: "backend", size: "medium", replicas: 1, x: 0, y: 200 },
-      { id: "llm-2", kind: "llm", size: "medium", replicas: 20, x: 100, y: 200 },
+      { id: "llm-2", kind: "llm", size: "medium", replicas: 20, region: "us-west", x: 100, y: 200 },
     ],
     edges: [{ id: "be-1-llm-2", source: "be-1", target: "llm-2" }],
     offeredLoad: 1000,
@@ -70,14 +72,17 @@ describe("per-kind scaling vocabulary (104)", () => {
     expect(screen.queryByText(/routing/i)).toBeNull();
   });
 
-  it("shows the held in-flight figure with its explainer (113 AC3)", () => {
+  it("shows the held in-flight figure with its explainer (113 AC3, 118 budget hint)", () => {
     render(<ScalePanel id="be-1" />);
-    const row = screen.getByTitle(UI.en.arena.inflightInfo);
+    // 118 — budgeted kinds append the stream-budget explainer to the title.
+    const row = screen.getByTitle(UI.en.arena.inflightInfo, { exact: false });
+    expect(row.title).toContain(UI.en.arena.inflightBudgetHint);
     expect(row.textContent).toMatch(/\d/); // healthy path → a real number
+    expect(row.textContent).toContain("/"); // held / budget (118 AC4)
   });
 
   it("shows — for in-flight when the awaited path is saturated (113 AC2)", () => {
-    // 1000 rps straight into a single medium deployment (cap 50) — it sheds.
+    // 1000 rps straight into a single medium deployment (cap 150) — it sheds.
     useArena.setState({
       nodes: [
         { id: "client-1", kind: "client", size: "medium", replicas: 1, x: 0, y: 0 },
@@ -92,7 +97,7 @@ describe("per-kind scaling vocabulary (104)", () => {
   });
 
   it("shows the quota-limited note on an over-quota regional pool (114 AC4)", () => {
-    // Two large ×20 pools (raw 4,000 rps) stacked in us-east — over the 3,000 quota.
+    // Two large ×20 pools (raw 12,000 calls/s) stacked in us-east — over the quota.
     useArena.setState({
       nodes: [
         { id: "gw", kind: "aiGateway", size: "medium", replicas: 1, x: 0, y: 0 },
@@ -109,7 +114,7 @@ describe("per-kind scaling vocabulary (104)", () => {
   });
 
   it("shows no quota note on a pool under its regional quota (114 AC4)", () => {
-    render(<ScalePanel id="llm-2" />); // medium ×20 = 1,000 ≤ the 3,000 quota
+    render(<ScalePanel id="llm-2" />); // medium ×20 = 3,000 — at, not over, the quota
     expect(screen.queryByTitle(UI.en.arena.quotaHint)).toBeNull();
   });
 
@@ -133,5 +138,49 @@ describe("per-kind scaling vocabulary (104)", () => {
   it("hides the region select on the client (106 AC2)", () => {
     render(<ScalePanel id="client-1" />);
     expect(screen.queryByRole("combobox", { name: UI.en.arena.region })).toBeNull();
+  });
+});
+
+// --- 120-arena-annotations ---------------------------------------------------------
+
+describe("node/edge note fields (120)", () => {
+  it("renders a note field on a selected node and commits typed text on blur (AC1)", () => {
+    render(<ScalePanel id="llm-1" />);
+    const ta = screen.getByLabelText(UI.en.arena.noteLabel);
+    fireEvent.change(ta, { target: { value: "2 calls/turn vs 150 quota — the wall" } });
+    fireEvent.blur(ta);
+    expect(useArena.getState().nodes.find((n) => n.id === "llm-1")!.note).toBe(
+      "2 calls/turn vs 150 quota — the wall",
+    );
+  });
+
+  it("seeds the field from an existing note and shows the character counter", () => {
+    useArena.getState().setNodeNote("llm-1", "hi");
+    render(<ScalePanel id="llm-1" />);
+    expect((screen.getByLabelText(UI.en.arena.noteLabel) as HTMLTextAreaElement).value).toBe("hi");
+    expect(screen.getByText(UI.en.arena.noteCounter(2))).toBeTruthy();
+  });
+
+  it("caps the textarea at NOTE_MAX characters (AC6)", () => {
+    render(<ScalePanel id="llm-1" />);
+    expect((screen.getByLabelText(UI.en.arena.noteLabel) as HTMLTextAreaElement).maxLength).toBe(
+      NOTE_MAX,
+    );
+  });
+
+  it("offers the note field even on the client — any node is annotatable", () => {
+    render(<ScalePanel id="client-1" />);
+    expect(screen.getByLabelText(UI.en.arena.noteLabel)).toBeTruthy();
+  });
+
+  it("renders the connection panel with a note field for a selected edge (AC2)", () => {
+    render(<EdgePanel id="be-1-llm-2" />);
+    expect(screen.getByText(UI.en.arena.edgePanelTitle)).toBeTruthy();
+    const ta = screen.getByLabelText(UI.en.arena.noteLabel);
+    fireEvent.change(ta, { target: { value: "fallback pool in us-west" } });
+    fireEvent.blur(ta);
+    expect(useArena.getState().edges.find((e) => e.id === "be-1-llm-2")!.note).toBe(
+      "fallback pool in us-west",
+    );
   });
 });

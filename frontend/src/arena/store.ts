@@ -10,11 +10,14 @@ import { create } from "zustand";
 
 import {
   ARENA_REGIONS,
+  CALL_SHAPE_BOUNDS,
+  DEFAULT_CALL_SHAPE,
   defaultHitRatioFor,
   INSTANCE_SIZES,
   isCacheLike,
   type ArenaKind,
   type ArenaRegion,
+  type CallShape,
   type InstanceSize,
 } from "./components";
 import { EXAMPLES, defaultDesign } from "./examples";
@@ -27,6 +30,31 @@ export interface ArenaNode extends ArenaNodeSpec {
   y: number;
   /** 106 — optional region annotation (pool intent; the model ignores it in v1). */
   region?: ArenaRegion;
+  /** 120 — optional free-text annotation justifying this box (model-neutral). */
+  note?: string;
+}
+
+/** 120 — annotations are captions, not essays. */
+export const NOTE_MAX = 280;
+
+/** 120 — normalize a note: trim, cap at NOTE_MAX; empty/non-string → undefined
+ *  (so the element carries no empty-string residue and the marker disappears). */
+export function sanitizeNote(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const trimmed = v.trim().slice(0, NOTE_MAX);
+  return trimmed.length ? trimmed : undefined;
+}
+
+/** 120 — return the element with a normalized note, or with the key removed when
+ *  the note is empty/invalid (no empty-string residue). Used by the loader and
+ *  by setNodeNote/setEdgeNote so persisted and live state stay consistent. */
+function withSanitizedNote<T extends { note?: string }>(el: T): T {
+  const note = sanitizeNote(el.note);
+  if (note === undefined) {
+    const { note: _drop, ...rest } = el;
+    return rest as T;
+  }
+  return { ...el, note };
 }
 
 export interface ArenaState {
@@ -42,15 +70,43 @@ export interface ArenaState {
   /** 115 — fan-out nudges the user waved away (target node ids). Pruned whenever
    *  the underlying nudge stops being derivable, so a re-wire nudges again. */
   dismissedNudges: string[];
+  /** 117 — the workload's LLM call shape (tokens per call); drives the LLM
+   *  tier's capacity, latency, cost and the regional quota. */
+  callShape: CallShape;
 }
 
 export const ARENA_STORAGE_KEY = "agentsim.arena";
+/** 116 — every new infrastructure node lands in East US by default. */
+const DEFAULT_REGION: ArenaRegion = "us-east";
 const DEFAULT_THINK_SEC = 30;
 const DEFAULT_USERS = 30_000; // ÷ 30s think = the pre-103 default of 1000 rps
 const DEFAULT_LOAD = DEFAULT_USERS / DEFAULT_THINK_SEC;
 
 function isSize(v: unknown): v is InstanceSize {
   return typeof v === "string" && (INSTANCE_SIZES as readonly string[]).includes(v);
+}
+
+/** 117 — clamp one call-shape axis to its slider bounds. */
+function clampTokens(v: number, axis: keyof typeof CALL_SHAPE_BOUNDS): number {
+  const b = CALL_SHAPE_BOUNDS[axis];
+  return Math.min(b.max, Math.max(b.min, Math.round(v)));
+}
+
+/** 117 — validate a persisted call shape; anything malformed falls back to default. */
+function sanitizeCallShape(v: unknown): CallShape {
+  if (
+    !!v &&
+    typeof v === "object" &&
+    typeof (v as CallShape).inputTokens === "number" &&
+    typeof (v as CallShape).outputTokens === "number" &&
+    (v as CallShape).inputTokens >= CALL_SHAPE_BOUNDS.inputTokens.min &&
+    (v as CallShape).inputTokens <= CALL_SHAPE_BOUNDS.inputTokens.max &&
+    (v as CallShape).outputTokens >= CALL_SHAPE_BOUNDS.outputTokens.min &&
+    (v as CallShape).outputTokens <= CALL_SHAPE_BOUNDS.outputTokens.max
+  ) {
+    return { inputTokens: (v as CallShape).inputTokens, outputTokens: (v as CallShape).outputTokens };
+  }
+  return DEFAULT_CALL_SHAPE;
 }
 
 /**
@@ -66,19 +122,23 @@ export function loadArena(): ArenaState {
     try {
       {
         const parsed = JSON.parse(raw) as Partial<ArenaState>;
-        const nodes = Array.isArray(parsed.nodes)
-          ? parsed.nodes.filter(
-              (n): n is ArenaNode =>
-                !!n && typeof n.id === "string" && typeof n.kind === "string" && isSize(n.size),
-            )
-          : [];
+        const nodes = (
+          Array.isArray(parsed.nodes)
+            ? parsed.nodes.filter(
+                (n): n is ArenaNode =>
+                  !!n && typeof n.id === "string" && typeof n.kind === "string" && isSize(n.size),
+              )
+            : []
+        ).map(withSanitizedNote); // 120 — drop bad notes, cap over-long ones
         const ids = new Set(nodes.map((n) => n.id));
-        const edges = Array.isArray(parsed.edges)
-          ? parsed.edges.filter(
-              (e): e is ArenaEdge =>
-                !!e && ids.has((e as ArenaEdge).source) && ids.has((e as ArenaEdge).target),
-            )
-          : [];
+        const edges = (
+          Array.isArray(parsed.edges)
+            ? parsed.edges.filter(
+                (e): e is ArenaEdge =>
+                  !!e && ids.has((e as ArenaEdge).source) && ids.has((e as ArenaEdge).target),
+              )
+            : []
+        ).map(withSanitizedNote); // 120
         const offeredLoad =
           typeof parsed.offeredLoad === "number" && parsed.offeredLoad >= 0
             ? parsed.offeredLoad
@@ -97,14 +157,17 @@ export function loadArena(): ArenaState {
         const dismissedNudges = Array.isArray(parsed.dismissedNudges)
           ? parsed.dismissedNudges.filter((d): d is string => typeof d === "string")
           : [];
+        // 117 — pre-117 blobs have no callShape: the default reproduces them exactly.
+        const callShape = sanitizeCallShape(parsed.callShape);
         // 110 — the effective rate is the closed-loop equilibrium of THIS design.
         return {
           nodes,
           edges,
-          offeredLoad: Math.round(equilibriumRps({ nodes, edges }, users, thinkTimeSec)),
+          offeredLoad: Math.round(equilibriumRps({ nodes, edges, callShape }, users, thinkTimeSec)),
           users,
           thinkTimeSec,
           dismissedNudges,
+          callShape,
         };
       }
     } catch {
@@ -118,6 +181,7 @@ export function loadArena(): ArenaState {
     users: DEFAULT_USERS,
     thinkTimeSec: DEFAULT_THINK_SEC,
     dismissedNudges: [],
+    callShape: DEFAULT_CALL_SHAPE,
   };
 }
 
@@ -140,11 +204,20 @@ function nextId(kind: ArenaKind, existing: ArenaNode[]): string {
 
 interface ArenaStore extends ArenaState {
   addNode: (kind: ArenaKind, pos: { x: number; y: number }) => string;
-  /** 107 — the selected node (drives the scale panel + auto-wire). Transient. */
+  /** 107 — the selected node (drives the scale panel). Transient. */
   selectedId: string | null;
   select: (id: string | null) => void;
-  /** 107 — palette drop: add + auto-wire from the selected node + select the
-   *  new node, so "select the gateway, drop 3 LLMs" wires itself. */
+  /** 120 — the selected edge (drives the connection note panel). Transient and
+   *  mutually exclusive with `selectedId`: selecting one clears the other. */
+  selectedEdgeId: string | null;
+  selectEdge: (id: string | null) => void;
+  /** 120 — annotate a node / an edge (trim + cap NOTE_MAX; empty removes the
+   *  note). Non-structural: keeps the loaded example selected. */
+  setNodeNote: (id: string, note: string) => void;
+  setEdgeNote: (id: string, note: string) => void;
+  /** 107/116 — palette drop: add + select the new node (so the scale panel
+   *  opens). Wiring is ALWAYS the user's explicit gesture — the 107 auto-wire
+   *  was removed by user request (surprise edges outweighed the convenience). */
   dropNode: (kind: ArenaKind, pos: { x: number; y: number }) => string;
   removeNode: (id: string) => void;
   /** Live position update during a drag — updates state only, does NOT persist. */
@@ -164,6 +237,9 @@ interface ArenaStore extends ArenaState {
   setCallsPerRequest: (id: string, calls: number) => void;
   /** 106 — annotate a node's region (null clears; invalid codes ignored). */
   setRegion: (id: string, region: string | null) => void;
+  /** 117 — the workload call shape (clamped to CALL_SHAPE_BOUNDS; structural:
+   *  the canvas no longer behaves like the loaded preset). */
+  setCallShape: (inputTokens: number, outputTokens: number) => void;
   /** 115 — wave a fan-out nudge away for this target node (persisted; pruned
    *  when the nudge stops being derivable). Never changes the node itself. */
   dismissNudge: (id: string) => void;
@@ -174,6 +250,10 @@ interface ArenaStore extends ArenaState {
   exampleId: string | null;
   /** Load a named example preset and mark it active (dropdown reflects it). */
   loadExample: (id: string) => void;
+  /** 119 — the ✕ on a callout hides them all for the loaded sample (transient;
+   *  loadExample resets it). Visibility itself derives from `exampleId`. */
+  calloutsHidden: boolean;
+  hideCallouts: () => void;
   clear: () => void;
 }
 
@@ -190,11 +270,11 @@ export const useArena = create<ArenaStore>((set, get) => {
   // removing the wiring (and re-adding it later) makes the nudge fire again.
   const save = (patch: Partial<ArenaState>) => {
     const merged = { ...get(), ...patch };
-    const { nodes, edges, users, thinkTimeSec } = merged;
-    const offeredLoad = Math.round(equilibriumRps({ nodes, edges }, users, thinkTimeSec));
+    const { nodes, edges, users, thinkTimeSec, callShape } = merged;
+    const offeredLoad = Math.round(equilibriumRps({ nodes, edges, callShape }, users, thinkTimeSec));
     const active = new Set(fanoutNudges({ nodes, edges }).map((nd) => nd.targetId));
     const dismissedNudges = merged.dismissedNudges.filter((id) => active.has(id));
-    commit(set, { nodes, edges, offeredLoad, users, thinkTimeSec, dismissedNudges });
+    commit(set, { nodes, edges, offeredLoad, users, thinkTimeSec, dismissedNudges, callShape });
   };
   // Structural edits (nodes/edges/scaling) mean the canvas no longer equals a preset,
   // so they deselect the Examples dropdown. Load-slider + drag keep the selection.
@@ -206,13 +286,27 @@ export const useArena = create<ArenaStore>((set, get) => {
     ...init,
     exampleId: null,
     selectedId: null,
+    selectedEdgeId: null,
+    calloutsHidden: false,
 
-    select: (id) => set({ selectedId: id }),
+    select: (id) => set({ selectedId: id, selectedEdgeId: null }),
+
+    selectEdge: (id) => set({ selectedEdgeId: id, selectedId: null }),
+
+    setNodeNote: (id, note) =>
+      save({
+        nodes: get().nodes.map((n) => (n.id === id ? withSanitizedNote({ ...n, note }) : n)),
+      }),
+
+    setEdgeNote: (id, note) =>
+      save({
+        edges: get().edges.map((e) => (e.id === id ? withSanitizedNote({ ...e, note }) : e)),
+      }),
+
+    hideCallouts: () => set({ calloutsHidden: true }),
 
     dropNode: (kind, pos) => {
-      const from = get().selectedId;
       const id = get().addNode(kind, pos);
-      if (from && get().nodes.some((n) => n.id === from)) get().connect(from, id);
       set({ selectedId: id });
       return id;
     },
@@ -227,17 +321,27 @@ export const useArena = create<ArenaStore>((set, get) => {
         x: pos.x,
         y: pos.y,
         ...(isCacheLike(kind) ? { hitRatio: defaultHitRatioFor(kind) } : {}),
+        // 116 — infrastructure defaults to East US; the client is the users,
+        // not a deployable box, so it carries no region.
+        ...(kind === "client" ? {} : { region: DEFAULT_REGION }),
       };
       saveStruct({ nodes: [...get().nodes, node] });
       return id;
     },
 
     removeNode: (id) => {
+      const droppedEdges = get()
+        .edges.filter((e) => e.source === id || e.target === id)
+        .map((e) => e.id);
       saveStruct({
         nodes: get().nodes.filter((n) => n.id !== id),
         edges: get().edges.filter((e) => e.source !== id && e.target !== id),
       });
       if (get().selectedId === id) set({ selectedId: null });
+      // 120 — a selected edge that touched this node is now gone.
+      if (get().selectedEdgeId && droppedEdges.includes(get().selectedEdgeId!)) {
+        set({ selectedEdgeId: null });
+      }
     },
 
     // Mid-drag: mutate state only (avoid a localStorage write on every frame).
@@ -254,7 +358,10 @@ export const useArena = create<ArenaStore>((set, get) => {
       saveStruct({ edges: [...get().edges, { id, source, target }] });
     },
 
-    removeEdge: (id) => saveStruct({ edges: get().edges.filter((e) => e.id !== id) }),
+    removeEdge: (id) => {
+      saveStruct({ edges: get().edges.filter((e) => e.id !== id) });
+      if (get().selectedEdgeId === id) set({ selectedEdgeId: null }); // 120
+    },
 
     setSize: (id, size) =>
       saveStruct({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, size } : n)) }),
@@ -293,6 +400,14 @@ export const useArena = create<ArenaStore>((set, get) => {
 
     dismissNudge: (id) => save({ dismissedNudges: [...get().dismissedNudges, id] }),
 
+    setCallShape: (inputTokens, outputTokens) =>
+      saveStruct({
+        callShape: {
+          inputTokens: clampTokens(inputTokens, "inputTokens"),
+          outputTokens: clampTokens(outputTokens, "outputTokens"),
+        },
+      }),
+
     setRegion: (id, region) => {
       if (region !== null && !(ARENA_REGIONS as readonly string[]).includes(region)) return;
       saveStruct({
@@ -313,14 +428,24 @@ export const useArena = create<ArenaStore>((set, get) => {
         edges: design.edges,
         users: design.users,
         thinkTimeSec: design.thinkTimeSec,
+        // 117 — a loaded design speaks the stated default call shape.
+        callShape: DEFAULT_CALL_SHAPE,
       }),
 
     loadExample: (id) => {
       const ex = EXAMPLES.find((e) => e.id === id);
       if (!ex) return;
       const d = ex.build();
-      save({ nodes: d.nodes, edges: d.edges, users: d.users, thinkTimeSec: d.thinkTimeSec });
-      set({ exampleId: id });
+      save({
+        nodes: d.nodes,
+        edges: d.edges,
+        users: d.users,
+        thinkTimeSec: d.thinkTimeSec,
+        // 117 — presets' claims are pinned at the default shape.
+        callShape: DEFAULT_CALL_SHAPE,
+      });
+      // 119 — a freshly loaded sample always shows its callouts again.
+      set({ exampleId: id, calloutsHidden: false });
     },
 
     clear: () => saveStruct({ nodes: [], edges: [] }),

@@ -63,3 +63,13 @@ None — frontend-only Arena UX change.
 ## Out of scope / deferred
 
 Click-to-connect mode; edge context menus; touch-specific gestures.
+
+## Amendment (2026-07-23, via 116 follow-up)
+
+**Auto-wire on palette drop (AC1/AC2) was REVERTED by user request**: dropping a
+component with a node selected created surprise edges the user then had to
+hunt down and delete. `dropNode` now only adds + selects the new node; wiring
+is always the user's explicit drag gesture. The palette hint became
+`arena.connectHint` ("drag from a node's round handle…"). Edge
+selection/Backspace removal, enlarged handles, snap radius and store-held
+selection all stand.

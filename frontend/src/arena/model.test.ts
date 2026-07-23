@@ -9,7 +9,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   BENCHMARKS,
+  CONCURRENCY_BUDGET_PER_UNIT,
   CROSS_REGION_LATENCY_MS,
+  DEFAULT_CALL_SHAPE,
   LLM_COST_PER_CALL_USD,
   LLM_COST_PER_DEPLOYMENT_HOUR_USD,
   REGIONAL_LLM_QUOTA_RPS,
@@ -19,12 +21,16 @@ import {
 } from "./components";
 import {
   computeMetrics,
+  concurrencyBudgetFor,
+  concurrencyPressure,
+  concurrencyStatusFor,
   effectiveCapacity,
   endToEndLatencyMs,
   equilibriumRps,
   heldInFlight,
   llmCost,
   routingTaxFor,
+  worseStatus,
   type ArenaDesign,
 } from "./model";
 
@@ -39,7 +45,7 @@ const e = (source: string, target: string) => ({ id: `${source}-${target}`, sour
 
 describe("arena capacity model — single node (AC1)", () => {
   it("caps throughput at capacity and flags a bottleneck when offered load exceeds it", () => {
-    const cap = BENCHMARKS.llm.baseCapacity; // e.g. 50 rps/replica
+    const cap = BENCHMARKS.llm.baseCapacity; // 150 calls/s per medium deployment
     const design: ArenaDesign = { nodes: [n("a", "llm")], edges: [] };
 
     const under = computeMetrics(design, cap / 2).get("a")!;
@@ -162,13 +168,13 @@ describe("calls-per-request fan-out (103 AC2)", () => {
     const design: ArenaDesign = {
       nodes: [
         n("be", "backend"),
-        n("llm", "llm", { callsPerRequest: 3, replicas: 10 }), // cap 500
+        n("llm", "llm", { callsPerRequest: 3, replicas: 10 }), // cap 1,500
       ],
       edges: [e("be", "llm")],
     };
     const m = computeMetrics(design, 100);
     expect(m.get("llm")!.arriving).toBe(300); // 100 requests × 3 calls
-    expect(m.get("llm")!.utilization).toBeCloseTo(300 / 500, 5);
+    expect(m.get("llm")!.utilization).toBeCloseTo(300 / 1500, 5);
   });
 });
 
@@ -290,9 +296,10 @@ describe("agent-turn latency — cpr serializes model calls (109 AC1/AC2)", () =
 // --- 110-arena-closed-loop ----------------------------------------------------
 
 describe("closed-loop equilibrium (110 AC1–AC3, AC5)", () => {
-  // The audited screenshot design: 122,300 users · think 20s · 3 LLM pools
-  // (large ×20) behind an AI Gateway — open-loop it reads "102%, dropping 38
-  // req/s, 80s"; a closed population self-throttles long before that.
+  // The audited scenario (rescaled by 116's calibration): 122,300 users ·
+  // think 20s · 3 LLM pools (large ×5 = 4,500 calls/s total) behind an AI
+  // Gateway — open-loop the demand (6,115 rps) reads 136%, dropping; a closed
+  // population self-throttles to ~4,100 rps instead of shedding.
   const auditDesign = (): ArenaDesign => ({
     nodes: [
       n("c", "client"),
@@ -300,11 +307,11 @@ describe("closed-loop equilibrium (110 AC1–AC3, AC5)", () => {
       n("lb", "loadBalancer"),
       n("be", "backend", { replicas: 2 }),
       n("gw", "aiGateway", { replicas: 2 }),
-      // One pool per region, as in the audited screenshot — each under the
-      // regional quota (2,000 ≤ 3,000), so 114's cap does not bite here.
-      n("llm1", "llm", { size: "large", replicas: 20, region: "us-east" }),
-      n("llm2", "llm", { size: "large", replicas: 20, region: "us-west" }),
-      n("llm3", "llm", { size: "large", replicas: 20, region: "eu-west" }),
+      // One pool per region — each under the regional quota (1,500 ≤ 3,000),
+      // so 114's cap does not bite here.
+      n("llm1", "llm", { size: "large", replicas: 5, region: "us-east" }),
+      n("llm2", "llm", { size: "large", replicas: 5, region: "us-west" }),
+      n("llm3", "llm", { size: "large", replicas: 5, region: "eu-west" }),
       n("cache", "cache", { hitRatio: 0.8 }),
       n("vdb", "vectorDb"),
     ],
@@ -336,12 +343,12 @@ describe("closed-loop equilibrium (110 AC1–AC3, AC5)", () => {
   it("AC2 — the audited 122k-user design self-throttles instead of shedding", () => {
     const d = auditDesign();
     const rps = equilibriumRps(d, 122_300, 20);
-    expect(rps).toBeGreaterThanOrEqual(4_700);
-    expect(rps).toBeLessThanOrEqual(5_200);
+    expect(rps).toBeGreaterThanOrEqual(3_900);
+    expect(rps).toBeLessThanOrEqual(4_300);
     const m = computeMetrics(d, rps);
     for (const id of ["llm1", "llm2", "llm3"]) {
-      expect(m.get(id)!.utilization, `${id} util`).toBeGreaterThanOrEqual(0.78);
-      expect(m.get(id)!.utilization, `${id} util`).toBeLessThanOrEqual(0.88);
+      expect(m.get(id)!.utilization, `${id} util`).toBeGreaterThanOrEqual(0.87);
+      expect(m.get(id)!.utilization, `${id} util`).toBeLessThanOrEqual(0.95);
       expect(m.get(id)!.shedRps, `${id} shed`).toBe(0);
     }
   });
@@ -362,7 +369,7 @@ describe("closed-loop equilibrium (110 AC1–AC3, AC5)", () => {
 
   it("AC5 — a fleet small enough still saturates at equilibrium (shed > 0)", () => {
     const d = tinyFleet();
-    const rps = equilibriumRps(d, 10_000, 5);
+    const rps = equilibriumRps(d, 20_000, 5);
     expect(computeMetrics(d, rps).get("llm")!.shedRps).toBeGreaterThan(0);
   });
 
@@ -422,8 +429,11 @@ describe("client-side LLM routing tax (105 AC1–AC3)", () => {
 // --- 114-arena-regional-quota ---------------------------------------------------
 
 describe("regional LLM quota (114 AC1–AC3)", () => {
-  const pool = (id: string, region?: string) =>
-    n(id, "llm", { size: "large" as const, replicas: 20, ...(region ? { region } : {}) }); // 2000 rps raw
+  // 116 recalibration: fixtures are sized relative to the constants — one pool
+  // fits under the quota; stacking pools in a region overflows it.
+  const POOL_RAW = 1500; // large ×5 = 300 × 5 (≤ the 3,000 quota on its own)
+  const pool = (id: string, region?: string, replicas = 5) =>
+    n(id, "llm", { size: "large" as const, replicas, ...(region ? { region } : {}) });
 
   const behindGateway = (llms: ReturnType<typeof pool>[]): ArenaDesign => ({
     nodes: [n("gw", "aiGateway"), ...llms],
@@ -431,7 +441,7 @@ describe("regional LLM quota (114 AC1–AC3)", () => {
   });
 
   it("AC1 — an over-quota region is squeezed proportionally to exactly the quota", () => {
-    // 60 large deployments (raw 6,000 rps) stacked in ONE region.
+    // 15 large deployments (raw 4,500 calls/s) stacked in ONE region.
     const d = behindGateway([
       pool("a", "us-east"),
       pool("b", "us-east"),
@@ -440,25 +450,27 @@ describe("regional LLM quota (114 AC1–AC3)", () => {
     const m = computeMetrics(d, 100);
     const total = ["a", "b", "c"].reduce((s, id) => s + m.get(id)!.capacity, 0);
     expect(total).toBeCloseTo(REGIONAL_LLM_QUOTA_RPS, 5);
+    const factor = REGIONAL_LLM_QUOTA_RPS / (3 * POOL_RAW);
     for (const id of ["a", "b", "c"]) {
-      expect(m.get(id)!.quotaFactor).toBeCloseTo(REGIONAL_LLM_QUOTA_RPS / 6000, 5);
-      expect(m.get(id)!.capacity).toBeCloseTo(2000 * (REGIONAL_LLM_QUOTA_RPS / 6000), 5);
+      expect(m.get(id)!.quotaFactor).toBeCloseTo(factor, 5);
+      expect(m.get(id)!.capacity).toBeCloseTo(POOL_RAW * factor, 5);
     }
   });
 
   it("AC1 — a region at/below quota is untouched (byte-for-byte)", () => {
-    const d = behindGateway([pool("a", "us-east")]); // raw 2,000 ≤ 3,000
+    const d = behindGateway([pool("a", "us-east")]); // raw 1,500 ≤ 3,000
     const m = computeMetrics(d, 100);
     expect(m.get("a")!.quotaFactor).toBe(1);
-    expect(m.get("a")!.capacity).toBeCloseTo(2000, 5);
+    expect(m.get("a")!.capacity).toBeCloseTo(POOL_RAW, 5);
   });
 
   it("AC3 — unassigned pools share one implicit quota pool (the cap can't be dodged)", () => {
-    const d = behindGateway([pool("a"), pool("b")]); // raw 4,000, no region badges
+    // Two ×6 pools (raw 3,600), no region badges — still one shared cap.
+    const d = behindGateway([pool("a", undefined, 6), pool("b", undefined, 6)]);
     const m = computeMetrics(d, 100);
-    const factor = REGIONAL_LLM_QUOTA_RPS / 4000;
+    const factor = REGIONAL_LLM_QUOTA_RPS / 3600;
     expect(m.get("a")!.quotaFactor).toBeCloseTo(factor, 5);
-    expect(m.get("b")!.capacity).toBeCloseTo(2000 * factor, 5);
+    expect(m.get("b")!.capacity).toBeCloseTo(1800 * factor, 5);
   });
 
   it("AC2 — spreading the same fleet across regions raises the aggregate ceiling", () => {
@@ -477,7 +489,7 @@ describe("regional LLM quota (114 AC1–AC3)", () => {
       return ["a", "b", "c"].reduce((s, id) => s + m.get(id)!.capacity, 0);
     };
     expect(capOf(stacked)).toBeCloseTo(REGIONAL_LLM_QUOTA_RPS, 5);
-    expect(capOf(spread)).toBeCloseTo(6000, 5); // each region under its own quota
+    expect(capOf(spread)).toBeCloseTo(3 * POOL_RAW, 5); // each region under its own quota
   });
 });
 
@@ -556,7 +568,7 @@ describe("held in-flight — Little's Law per node (113 AC1/AC2/AC4)", () => {
       nodes: [n("be", "backend"), n("llm", "llm"), n("db", "appDb")],
       edges: [e("be", "llm"), e("be", "db")],
     };
-    const held = heldInFlight(design, 200); // llm (cap 50) sheds
+    const held = heldInFlight(design, 200); // llm (cap 150) sheds
     expect(held.get("llm")).toBeNull(); // its own queue figure would be fiction
     expect(held.get("be")).toBeNull(); // it awaits the saturated model
     expect(held.get("db")).not.toBeNull(); // the healthy sibling still reports
@@ -681,5 +693,105 @@ describe("arena capacity model — queueing latency (AC7)", () => {
     expect(low).toBeGreaterThanOrEqual(BENCHMARKS.backend.baseLatencyMs);
     expect(mid).toBeGreaterThan(low);
     expect(high).toBeGreaterThan(mid);
+  });
+});
+
+// --- 117-arena-llm-call-shape ----------------------------------------------------
+
+describe("call shape threads through the model (117 AC4)", () => {
+  const design = (): ArenaDesign => ({
+    nodes: [n("client", "client"), n("backend", "backend"), n("llm", "llm", { callsPerRequest: 2 })],
+    edges: [e("client", "backend"), e("backend", "llm")],
+  });
+
+  it("a design with no callShape behaves byte-for-byte like the explicit default", () => {
+    const load = 60;
+    const bare = computeMetrics(design(), load);
+    const explicit = computeMetrics({ ...design(), callShape: DEFAULT_CALL_SHAPE }, load);
+    for (const id of ["client", "backend", "llm"]) {
+      expect(explicit.get(id)!).toEqual(bare.get(id)!);
+    }
+    expect(endToEndLatencyMs({ ...design(), callShape: DEFAULT_CALL_SHAPE }, load)).toBe(
+      endToEndLatencyMs(design(), load),
+    );
+    expect(equilibriumRps({ ...design(), callShape: DEFAULT_CALL_SHAPE }, 2000, 20)).toBe(
+      equilibriumRps(design(), 2000, 20),
+    );
+  });
+
+  it("a heavier payload squeezes the LLM tier: less capacity, more latency, more cost", () => {
+    const heavy = { inputTokens: 8000, outputTokens: 2000 }; // 4× the default 2.5k tokens
+    const load = 20;
+    const base = computeMetrics(design(), load).get("llm")!;
+    const squeezed = computeMetrics({ ...design(), callShape: heavy }, load).get("llm")!;
+    expect(squeezed.capacity).toBeCloseTo(base.capacity / 4, 5);
+    expect(squeezed.latencyMs).toBeGreaterThan(base.latencyMs);
+    const cheap = llmCost(design(), load);
+    const pricey = llmCost({ ...design(), callShape: heavy }, load);
+    expect(pricey.usagePerHour).toBeGreaterThan(cheap.usagePerHour * 3);
+    // provisioned capacity is billed per deployment — shape-independent
+    expect(pricey.provisionedPerHour).toBe(cheap.provisionedPerHour);
+  });
+
+  it("effectiveCapacity accepts a shape for LLM nodes and ignores it elsewhere", () => {
+    const heavy = { inputTokens: 8000, outputTokens: 2000 };
+    expect(effectiveCapacity(n("x", "llm"), heavy)).toBeCloseTo(
+      BENCHMARKS.llm.baseCapacity / 4,
+      5,
+    );
+    expect(effectiveCapacity(n("x", "backend"), heavy)).toBe(BENCHMARKS.backend.baseCapacity);
+  });
+});
+
+// --- 118-arena-backend-concurrency ------------------------------------------------
+
+describe("backend concurrency wall (118 AC1–AC3)", () => {
+  it("budgets held streams per container × size × containers, and only where stated (AC1)", () => {
+    expect(concurrencyBudgetFor(n("b", "backend"))).toBe(
+      CONCURRENCY_BUDGET_PER_UNIT.backend!,
+    );
+    expect(concurrencyBudgetFor(n("b", "backend", { size: "large", replicas: 3 }))).toBe(
+      CONCURRENCY_BUDGET_PER_UNIT.backend! * SIZE_MULTIPLIER.large * 3,
+    );
+    // Kinds without a stated budget have none — no fictional walls.
+    expect(concurrencyBudgetFor(n("g", "aiGateway"))).toBeNull();
+    expect(concurrencyBudgetFor(n("l", "llm"))).toBeNull();
+  });
+
+  it("maps pressure onto the 108 thresholds and stays silent without data (AC2)", () => {
+    expect(concurrencyPressure(500, 1000)).toBeCloseTo(0.5, 5);
+    expect(concurrencyPressure(null, 1000)).toBeNull(); // shedding path — no figure
+    expect(concurrencyPressure(500, null)).toBeNull(); // no budget — no wall
+    expect(concurrencyStatusFor(500, 1000)).toBe("healthy");
+    expect(concurrencyStatusFor(750, 1000)).toBe("warning");
+    expect(concurrencyStatusFor(950, 1000)).toBe("critical");
+    expect(concurrencyStatusFor(null, 1000)).toBeNull();
+  });
+
+  it("merges by severity: the worse of QPS status and connection pressure wins", () => {
+    expect(worseStatus("healthy", "critical")).toBe("critical");
+    expect(worseStatus("warning", "healthy")).toBe("warning");
+    expect(worseStatus("critical", "warning")).toBe("critical");
+    expect(worseStatus("unreachable", "critical")).toBe("unreachable");
+  });
+
+  it("the 200k-users review case: a QPS-healthy backend is critical by held streams (AC3)", () => {
+    // One medium backend (5,000 req/s of CPU, 2,000 held streams) in front of a
+    // big-but-slow LLM pool: nothing sheds, QPS looks green, the wall is real.
+    const design: ArenaDesign = {
+      nodes: [
+        n("client", "client"),
+        n("backend", "backend"),
+        n("llm", "llm", { size: "xlarge", replicas: 10, callsPerRequest: 2, region: "us-east" }),
+      ],
+      edges: [e("client", "backend"), e("backend", "llm")],
+    };
+    const load = 1500; // calls = 3,000 vs 6,000 capacity — util 50%, no shedding
+    const m = computeMetrics(design, load).get("backend")!;
+    expect(m.status).toBe("healthy"); // QPS lens alone says all green…
+    const held = heldInFlight(design, load).get("backend")!;
+    const budget = concurrencyBudgetFor(n("backend", "backend"))!;
+    expect(held).toBeGreaterThan(budget); // …while it holds > its stream budget
+    expect(worseStatus(m.status, concurrencyStatusFor(held, budget)!)).toBe("critical");
   });
 });

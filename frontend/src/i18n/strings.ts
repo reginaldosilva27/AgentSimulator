@@ -87,6 +87,8 @@ export interface Strings {
     usersLabel: string;
     thinkTime: string;
     thinkTimeHint: string;
+    // 116 — the dropdown option spells out "1 msg every Ns" (was a cryptic 1/Ns).
+    thinkTimeOption: (seconds: number) => string;
     usersReadout: (users: string, rps: string) => string;
     // 110 — closed-loop: when latency self-throttles the population, the header
     // shows the demanded rate → the effective equilibrium rate.
@@ -112,12 +114,23 @@ export interface Strings {
     metric: { qps: string; latency: string; util: string; capacity: string; inflight: string };
     // 113 — the held-in-flight explainer (Little's Law: thr × time held open).
     inflightInfo: string;
+    // 118 — the backend connection wall (held streams vs the container budget).
+    connectionWall: string;
+    connectionWallDetail: (held: string) => string;
+    inflightBudgetHint: string;
     status: { healthy: string; warning: string; critical: string; unreachable: string };
     size: string;
     // 104 — the ℹ️ explainer toggle + the capacity formula hint. The horizontal
     // unit label is per-kind (KIND_META.scaling.unit), no generic "replicas".
     infoLabel: string;
     capacityHint: string;
+    // 117 — the workload payload (LLM call shape) control in the bar.
+    payload: string;
+    payloadReadout: (inTok: string, outTok: string) => string;
+    payloadInput: string;
+    payloadOutput: string;
+    payloadHint: string;
+    payloadDerived: (calls: string, cost: string) => string;
     // 105 — the client-side LLM routing tax note (pct already formatted, e.g. "38%").
     routingTax: (pct: string, n: number) => string;
     // 114 — the regional LLM quota note (a region caps provisionable capacity).
@@ -127,8 +140,10 @@ export interface Strings {
     region: string;
     regionHint: string;
     regionNone: string;
+    // 119 — the ✕ aria-label on an example's explanation bubbles.
+    calloutHide: string;
     // 107 — wiring gestures taught in the palette footer.
-    autoWireHint: string;
+    connectHint: string;
     edgeHint: string;
     // 115 — builder nudges: the fan-out suggestion chip + the units-ceiling hint.
     fanoutNudge: string;
@@ -140,6 +155,12 @@ export interface Strings {
     bottleneck: string;
     selectHint: string;
     remove: string;
+    // 120-arena-annotations — the user's own free-text note on a node/edge.
+    noteLabel: string;
+    notePlaceholder: string;
+    noteClear: string;
+    noteCounter: (n: number) => string;
+    edgePanelTitle: string; // heading of the selected-connection panel
   };
   // 058-online-demo-mode: the backend-less GitHub Pages showcase build.
   demo: {
@@ -1322,7 +1343,8 @@ const en: Strings = {
     usersLabel: "Concurrent users",
     thinkTime: "Think time",
     thinkTimeHint:
-      "Seconds between requests per user — req/s = users ÷ think time (Little's Law). The single most decisive knob: chat users typically pause 30–120s between messages, and halving it doubles the load.",
+      "How often each user sends a message — req/s = users ÷ think time (Little's Law). The single most decisive knob: chat users typically pause 30–120s between messages, and halving it doubles the load.",
+    thinkTimeOption: (seconds) => `1 msg every ${seconds}s`,
     usersReadout: (users, rps) => `${users} users ≈ ${rps} req/s`,
     effectiveRate: (rps) => `→ ${rps} req/s effective`,
     closedLoopHint:
@@ -1339,7 +1361,14 @@ const en: Strings = {
       "Modeled latency of one agent turn: serialized stages sum, and k calls per request cost k × the model's latency. Worst-case path (cache misses included).",
     llmCost: "LLM cost",
     llmCostHint:
-      "Teaching estimates: ~$100/h per medium deployment (provisioned, billed even idle — think PTUs) plus ~$0.0016 per agent-shaped call (~2k in / 500 out at gpt-4.1-mini prices). Break-even ≈ 35% utilization.",
+      "Teaching estimates: ~$300/h per medium deployment (provisioned, billed even idle — PTU-block territory) plus a per-call price at the configured payload (gpt-4.1-mini token prices). Break-even ≈ 35% utilization at the default shape.",
+    payload: "LLM payload",
+    payloadReadout: (inTok, outTok) => `${inTok} in / ${outTok} out`,
+    payloadInput: "Input tokens per call",
+    payloadOutput: "Output tokens per call",
+    payloadHint:
+      "Quota is a token budget (TPM), so one assumption moves three numbers: a bigger call buys fewer calls/s per deployment, takes longer (prefill + decode) and costs more. Big system prompts, history and retrieved chunks all live on the input side.",
+    payloadDerived: (calls, cost) => `≈ ${calls} calls/s per medium deployment · ~$${cost}/call`,
     llmCostProvisioned: (v) => `~$${v}/h provisioned`,
     llmCostUsage: (v) => `~$${v}/h usage`,
     reset: "Reset canvas",
@@ -1353,6 +1382,11 @@ const en: Strings = {
     },
     inflightInfo:
       "Requests this component is holding open right now (Little's Law: throughput × time waiting, including everything downstream it waits on). A synchronous agent backend holds its connection/SSE stream for the WHOLE turn — connection pools and memory run out long before CPU does.",
+    connectionWall: "Connection wall",
+    connectionWallDetail: (held) =>
+      `holding ~${held} open streams — add containers or shorten the turn`,
+    inflightBudgetHint:
+      "Stream budget: ~2,000 held streams per medium container (× size × containers) — the teaching stand-in for connection pools, file descriptors and per-stream memory. An agent backend hits this wall long before CPU: each user waits the whole multi-second turn on an open stream.",
     status: {
       healthy: "Healthy",
       warning: "Warning",
@@ -1366,12 +1400,13 @@ const en: Strings = {
       `Client-side LLM routing: −${pct} capacity (managing ${n} deployments — an AI Gateway removes this)`,
     quotaLimited: (region) => `Quota-limited — ${region} is at its regional LLM quota`,
     quotaHint:
-      "A region caps how much model capacity you can provision (subscription quota / PTU availability). Past the cap, more deployments in the same region add nothing — add another region or a higher quota tier.",
+      "A region caps how much model capacity you can provision (subscription quota / PTU availability — modeled at ~3,000 agent-calls/s per region, ≈2× the top published tier: the order you reach with approved quota increases). Past the cap, more deployments in the same region add nothing — add another region or a higher quota tier.",
     region: "Region",
     regionHint:
       "Pools in different regions survive a region outage, cut latency near users and meet data residency. An annotation for now — challenges will score it.",
     regionNone: "No region",
-    autoWireHint: "Tip: with a node selected, a dropped component is wired from it automatically",
+    calloutHide: "Hide explanations",
+    connectHint: "Tip: drag from a node's round handle to another node to connect them",
     edgeHint: "Click a link and press Backspace to remove it",
     fanoutNudge: "An agent turn makes 2–5 model calls — set calls per request = 2?",
     fanoutApply: "Set to 2",
@@ -1383,6 +1418,11 @@ const en: Strings = {
     bottleneck: "Bottleneck",
     selectHint: "Select a component to scale it",
     remove: "Remove",
+    noteLabel: "Note",
+    notePlaceholder: "Why this choice?",
+    noteClear: "Clear note",
+    noteCounter: (n) => `${n}/280`,
+    edgePanelTitle: "Connection",
   },
   demo: {
     bannerLead: "Demo mode — sample questions only, replaying real captured runs.",
@@ -2682,7 +2722,8 @@ const pt: Strings = {
     usersLabel: "Usuários simultâneos",
     thinkTime: "Tempo entre mensagens",
     thinkTimeHint:
-      "Segundos entre requests por usuário — req/s = usuários ÷ tempo entre mensagens (Lei de Little). O knob mais decisivo de todos: usuários de chat tipicamente pausam 30–120s entre mensagens, e reduzir pela metade dobra a carga.",
+      "Com que frequência cada usuário envia uma mensagem — req/s = usuários ÷ tempo entre mensagens (Lei de Little). O knob mais decisivo de todos: usuários de chat tipicamente pausam 30–120s entre mensagens, e reduzir pela metade dobra a carga.",
+    thinkTimeOption: (seconds) => `1 msg a cada ${seconds}s`,
     usersReadout: (users, rps) => `${users} usuários ≈ ${rps} req/s`,
     effectiveRate: (rps) => `→ ${rps} req/s efetivos`,
     closedLoopHint:
@@ -2699,7 +2740,15 @@ const pt: Strings = {
       "Latência modelada de um turno do agente: etapas em sequência somam, e k chamadas por request custam k × a latência do modelo. Caminho de pior caso (incluindo cache miss).",
     llmCost: "Custo do LLM",
     llmCostHint:
-      "Estimativas didáticas: ~US$ 100/h por deployment médio (provisionado, cobrado mesmo ocioso — pense em PTUs) mais ~US$ 0,0016 por chamada de agente (~2k entrada / 500 saída a preços do gpt-4.1-mini). Ponto de equilíbrio ≈ 35% de utilização.",
+      "Estimativas didáticas: ~US$ 300/h por deployment médio (provisionado, cobrado mesmo ocioso — território de blocos de PTU) mais um preço por chamada no payload configurado (preços de token do gpt-4.1-mini). Ponto de equilíbrio ≈ 35% de utilização na forma padrão.",
+    payload: "Payload da LLM",
+    payloadReadout: (inTok, outTok) => `${inTok} in / ${outTok} out`,
+    payloadInput: "Tokens de input por chamada",
+    payloadOutput: "Tokens de output por chamada",
+    payloadHint:
+      "A cota é um orçamento de tokens (TPM), então uma única premissa move três números: uma chamada maior compra menos chamadas/s por deployment, demora mais (prefill + decode) e custa mais. System prompt grande, histórico e chunks recuperados vivem todos no lado do input.",
+    payloadDerived: (calls, cost) =>
+      `≈ ${calls} chamadas/s por deployment médio · ~$${cost}/chamada`,
     llmCostProvisioned: (v) => `~$${v}/h provisionado`,
     llmCostUsage: (v) => `~$${v}/h de uso`,
     reset: "Limpar canvas",
@@ -2713,6 +2762,11 @@ const pt: Strings = {
     },
     inflightInfo:
       "Requests que este componente mantém abertos agora (Lei de Little: vazão × tempo de espera, incluindo tudo que ele aguarda a jusante). Um backend de agente síncrono segura a conexão/stream SSE o turno INTEIRO — pools de conexão e memória acabam muito antes da CPU.",
+    connectionWall: "Parede de conexões",
+    connectionWallDetail: (held) =>
+      `segurando ~${held} streams abertos — adicione containers ou encurte o turno`,
+    inflightBudgetHint:
+      "Orçamento de streams: ~2.000 streams segurados por container médio (× tamanho × containers) — o substituto didático para pools de conexão, file descriptors e memória por stream. Um backend de agente bate nesta parede muito antes da CPU: cada usuário espera o turno inteiro de vários segundos em um stream aberto.",
     status: {
       healthy: "Saudável",
       warning: "Alerta",
@@ -2726,13 +2780,13 @@ const pt: Strings = {
       `Roteamento de LLM no app: −${pct} de capacidade (gerenciando ${n} deployments — um AI Gateway remove isso)`,
     quotaLimited: (region) => `Limitado por cota — ${region} atingiu a cota regional de LLM`,
     quotaHint:
-      "Uma região limita quanta capacidade de modelo você consegue provisionar (cota da assinatura / disponibilidade de PTU). Acima do teto, mais deployments na mesma região não adicionam nada — adicione outra região ou um tier de cota maior.",
+      "Uma região limita quanta capacidade de modelo você consegue provisionar (cota da assinatura / disponibilidade de PTU — modelado em ~3.000 chamadas de agente/s por região, ≈2× o tier máximo publicado: a ordem que se alcança com aumentos de cota aprovados). Acima do teto, mais deployments na mesma região não adicionam nada — adicione outra região ou um tier de cota maior.",
     region: "Região",
     regionHint:
       "Pools em regiões diferentes sobrevivem à queda de uma região, reduzem a latência perto dos usuários e atendem residência de dados. Por ora é uma anotação — os desafios vão pontuar isso.",
     regionNone: "Sem região",
-    autoWireHint:
-      "Dica: com um nó selecionado, um componente solto no canvas já é ligado a partir dele",
+    calloutHide: "Ocultar explicações",
+    connectHint: "Dica: arraste do conector redondo de um nó até outro nó para ligá-los",
     edgeHint: "Clique numa ligação e pressione Backspace para removê-la",
     fanoutNudge: "Um turno de agente faz de 2 a 5 chamadas de modelo — definir chamadas por request = 2?",
     fanoutApply: "Definir como 2",
@@ -2744,6 +2798,11 @@ const pt: Strings = {
     bottleneck: "Gargalo",
     selectHint: "Selecione um componente para escalá-lo",
     remove: "Remover",
+    noteLabel: "Nota",
+    notePlaceholder: "Por que essa escolha?",
+    noteClear: "Limpar nota",
+    noteCounter: (n) => `${n}/280`,
+    edgePanelTitle: "Conexão",
   },
   demo: {
     bannerLead: "Modo demo — apenas perguntas de exemplo, reproduzindo execuções reais capturadas.",

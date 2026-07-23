@@ -169,7 +169,7 @@ describe("provisioned + usage LLM cost (111 AC3)", () => {
         { id: "be-llm", source: "be", target: "llm" },
       ],
       users: 400,
-      thinkTimeSec: 20, // 20 req/s over one medium deployment (cap 50) — served, billed
+      thinkTimeSec: 20, // 20 req/s over one medium deployment (cap 150) — served, billed
     });
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
@@ -179,11 +179,40 @@ describe("provisioned + usage LLM cost (111 AC3)", () => {
   });
 });
 
-describe("wiring gesture hints (107 AC5)", () => {
-  it("teaches auto-wire and edge deletion in the palette footer", () => {
+describe("wiring gesture hints (107 AC5, connect gesture manual since 116)", () => {
+  it("teaches manual connection and edge deletion in the palette footer", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
-    expect(screen.getByText(UI.en.arena.autoWireHint)).toBeTruthy();
+    expect(screen.getByText(UI.en.arena.connectHint)).toBeTruthy();
     expect(screen.getByText(UI.en.arena.edgeHint)).toBeTruthy();
+  });
+});
+
+describe("think-time selector clarity (116 AC2)", () => {
+  it('spells out "1 msg every Ns" instead of the cryptic 1/Ns', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
+    const select = screen.getByRole("combobox", { name: UI.en.arena.thinkTime });
+    const labels = Array.from(select.querySelectorAll("option")).map((o) => o.textContent);
+    expect(labels).toContain(UI.en.arena.thinkTimeOption(20)); // "1 msg every 20s"
+    expect(labels.some((l) => /^1\/\d+s$/.test(l ?? ""))).toBe(false);
+  });
+});
+
+describe("the workload payload control (117 AC6)", () => {
+  it("shows the current call shape and edits it through the popover sliders", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
+    // The control reads the current shape (default 2000 in / 500 out).
+    const toggle = screen.getByRole("button", { name: UI.en.arena.payload });
+    expect(toggle.textContent).toContain("2,000");
+    expect(toggle.textContent).toContain("500");
+    fireEvent.click(toggle);
+    // The panel explains why tokens move capacity/latency/cost together…
+    expect(screen.getByText(UI.en.arena.payloadHint)).toBeTruthy();
+    // …and editing the input slider updates the store.
+    const input = screen.getByRole("slider", { name: UI.en.arena.payloadInput });
+    fireEvent.change(input, { target: { value: "8000" } });
+    expect(useArena.getState().callShape.inputTokens).toBe(8000);
   });
 });

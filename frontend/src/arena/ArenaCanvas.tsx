@@ -5,8 +5,9 @@
 //
 // 107-arena-wiring-ux — wiring is the page's core gesture, so it's forgiving:
 // enlarged handles (ArenaNode), a generous connectionRadius (snap), a visible
-// connection line, palette drops auto-wire from the selected node (store
-// `dropNode`), and a mis-wired link is selectable + Backspace-removable.
+// connection line, and a mis-wired link is selectable + Backspace-removable.
+// 116 — palette drops add a FREE node (107's auto-wire removed by user request);
+// connecting is always the user's explicit drag gesture.
 
 import {
   Background,
@@ -35,20 +36,31 @@ import {
 import { formatQps } from "./format";
 import {
   computeMetrics,
+  concurrencyBudgetFor,
+  concurrencyStatusFor,
   effectiveCapacity,
   heldInFlight,
   quotaFactorsFor,
   routingTaxFor,
+  worseStatus,
 } from "./model";
+import { EXAMPLES } from "./examples";
 import { fanoutNudges } from "./nudges";
 import { ARENA_DND_MIME } from "./Palette";
-import { useArena } from "./store";
+import { NOTE_MAX, useArena } from "./store";
 
 const nodeTypes = { arena: ArenaNode };
 
 /** 107 AC3 — the edge ids a React Flow change list asks to remove (pure). */
 export function edgeIdsToRemove(changes: EdgeChange[]): string[] {
   return changes.filter((c) => c.type === "remove").map((c) => c.id);
+}
+
+/** 120 — the 📝 marker an annotated edge projects at its midpoint (React Flow's
+ *  edge `label`). Pure so AC3's edge case is testable without React Flow layout
+ *  (edge labels aren't rendered in jsdom). */
+export function edgeLabelFor(edge: { note?: string }): string | undefined {
+  return edge.note ? "📝" : undefined;
 }
 
 export function ArenaCanvas() {
@@ -59,8 +71,13 @@ export function ArenaCanvas() {
   const nodes = useArena((s) => s.nodes);
   const edges = useArena((s) => s.edges);
   const offeredLoad = useArena((s) => s.offeredLoad);
-  // 107 — node selection lives in the store (drives the panel + auto-wire).
+  // 117 — the workload call shape feeds every model call.
+  const callShape = useArena((s) => s.callShape);
+  // 107 — node selection lives in the store (drives the scale panel).
   const selectedId = useArena((s) => s.selectedId);
+  // 120 — edge selection also lives in the store now (drives the note panel),
+  // mutually exclusive with the node selection.
+  const selectedEdgeId = useArena((s) => s.selectedEdgeId);
   const dismissedNudges = useArena((s) => s.dismissedNudges);
   const {
     dropNode,
@@ -70,6 +87,7 @@ export function ArenaCanvas() {
     removeEdge,
     connect,
     select,
+    selectEdge,
     setCallsPerRequest,
     dismissNudge,
   } = useArena.getState();
@@ -81,15 +99,36 @@ export function ArenaCanvas() {
     [nodes, edges, dismissedNudges],
   );
 
-  // Edge selection is view-only state (which link is highlighted for deletion).
-  const [selectedEdges, setSelectedEdges] = useState<ReadonlySet<string>>(new Set());
+  const metrics = useMemo(
+    () => computeMetrics({ nodes, edges, callShape }, offeredLoad),
+    [nodes, edges, callShape, offeredLoad],
+  );
 
-  const metrics = useMemo(() => computeMetrics({ nodes, edges }, offeredLoad), [nodes, edges, offeredLoad]);
+  // 118 — held streams per node (113's Little's-Law figure), now a status signal.
+  const held = useMemo(
+    () => heldInFlight({ nodes, edges, callShape }, offeredLoad),
+    [nodes, edges, callShape, offeredLoad],
+  );
+
+  // 119 — the loaded sample's node-anchored explanation bubbles (visibility
+  // derives from exampleId, which every structural edit already clears).
+  const exampleId = useArena((s) => s.exampleId);
+  const calloutsHidden = useArena((s) => s.calloutsHidden);
+  const callouts = useMemo(() => {
+    if (!exampleId || calloutsHidden) return new Map<string, string>();
+    const ex = EXAMPLES.find((x) => x.id === exampleId);
+    return new Map((ex?.callouts ?? []).map((c) => [c.nodeId, c.text[lang]]));
+  }, [exampleId, calloutsHidden, lang]);
 
   const rfNodes = useMemo<Node<ArenaNodeData>[]>(
     () =>
       nodes.map((n) => {
         const m = metrics.get(n.id)!;
+        // 118 — the effective status is the WORSE of QPS utilization and
+        // connection pressure (held streams vs the container budget).
+        const budget = concurrencyBudgetFor(n);
+        const heldHere = held.get(n.id) ?? null;
+        const pressureStatus = concurrencyStatusFor(heldHere, budget);
         return {
           id: n.id,
           type: "arena",
@@ -97,7 +136,7 @@ export function ArenaCanvas() {
           selected: n.id === selectedId,
           data: {
             label: KIND_META[n.kind].label[lang],
-            status: m.status,
+            status: pressureStatus ? worseStatus(m.status, pressureStatus) : m.status,
             qps: m.throughput,
             latencyMs: m.latencyMs,
             utilization: m.utilization,
@@ -106,27 +145,37 @@ export function ArenaCanvas() {
             replicas: n.replicas,
             scaled: n.size !== "medium" || n.replicas > 1,
             region: n.region,
+            held: heldHere,
+            budget,
+            connectionWall: budget !== null && heldHere !== null && heldHere > budget,
+            callout: callouts.get(n.id),
+            note: n.note,
           },
         };
       }),
-    [nodes, metrics, selectedId, lang],
+    [nodes, metrics, held, callouts, selectedId, lang],
   );
 
   const rfEdges = useMemo<Edge[]>(
     () =>
-      edges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        animated: true,
-        selected: selectedEdges.has(e.id),
-        markerEnd: { type: MarkerType.ArrowClosed },
-        style: {
-          stroke: selectedEdges.has(e.id) ? "var(--color-sky)" : "var(--color-edge-soft)",
-          strokeWidth: selectedEdges.has(e.id) ? 2 : 1,
-        },
-      })),
-    [edges, selectedEdges],
+      edges.map((e) => {
+        const isSelected = e.id === selectedEdgeId;
+        return {
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          animated: true,
+          selected: isSelected,
+          // 120 — an annotated connection shows a 📝 marker at its midpoint.
+          label: edgeLabelFor(e),
+          markerEnd: { type: MarkerType.ArrowClosed },
+          style: {
+            stroke: isSelected ? "var(--color-sky)" : "var(--color-edge-soft)",
+            strokeWidth: isSelected ? 2 : 1,
+          },
+        };
+      }),
+    [edges, selectedEdgeId],
   );
 
   const onNodesChange = useCallback(
@@ -145,22 +194,18 @@ export function ArenaCanvas() {
   );
 
   // 107 AC3 — a selected link is removable with Backspace/Delete.
+  // 120 — React Flow's selection is routed into the store (single selection),
+  // which drives both the highlight and the connection note panel.
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
       for (const id of edgeIdsToRemove(changes)) removeEdge(id);
-      const selects = changes.filter((c) => c.type === "select");
-      if (selects.length) {
-        setSelectedEdges((prev) => {
-          const next = new Set(prev);
-          for (const c of selects) {
-            if (c.selected) next.add(c.id);
-            else next.delete(c.id);
-          }
-          return next;
-        });
+      for (const c of changes) {
+        if (c.type !== "select") continue;
+        if (c.selected) selectEdge(c.id);
+        else if (useArena.getState().selectedEdgeId === c.id) selectEdge(null);
       }
     },
-    [removeEdge],
+    [removeEdge, selectEdge],
   );
 
   const selected = nodes.find((n) => n.id === selectedId) ?? null;
@@ -174,7 +219,7 @@ export function ArenaCanvas() {
           const kind = ev.dataTransfer.getData(ARENA_DND_MIME) as ArenaKind;
           if (!kind || !(kind in KIND_META)) return; // ignore drags from other sources
           const pos = screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
-          // 107 AC1 — auto-wires from the selected node + selects the new one.
+          // 107/116 — adds a free node and selects it (no auto-wire).
           dropNode(kind, pos);
         }}
         onDragOver={(ev) => {
@@ -248,6 +293,7 @@ export function ArenaCanvas() {
       )}
 
       {selected && <ScalePanel id={selected.id} />}
+      {selectedEdgeId && <EdgePanel id={selectedEdgeId} />}
     </div>
   );
 }
@@ -270,19 +316,23 @@ export function ScalePanel({ id }: { id: string }) {
   const nodes = useArena((s) => s.nodes);
   const edges = useArena((s) => s.edges);
   const offeredLoad = useArena((s) => s.offeredLoad);
-  const { setSize, setReplicas, setHitRatio, setCallsPerRequest, setRegion, removeNode } =
+  const callShape = useArena((s) => s.callShape);
+  const { setSize, setReplicas, setHitRatio, setCallsPerRequest, setRegion, setNodeNote, removeNode } =
     useArena.getState();
   if (!node) return null;
+  const design = { nodes, edges, callShape };
   const meta = KIND_META[node.kind];
   const scaling = meta.scaling;
   // 105 — client-side LLM routing overhead this node pays (0 unless it holds
   // LLM deployment endpoints directly; an AI Gateway in between removes it).
-  const routing = routingTaxFor({ nodes, edges }, id);
+  const routing = routingTaxFor(design, id);
   // 114 — the regional quota squeeze on this pool (1 when under quota).
-  const quotaFactor = quotaFactorsFor({ nodes, edges }).get(id) ?? 1;
+  const quotaFactor = quotaFactorsFor(design).get(id) ?? 1;
   // 113 — requests this node is holding open (Little's Law; null when the
   // awaited path sheds — a figure built on the clamped latency would be fiction).
-  const held = heldInFlight({ nodes, edges }, offeredLoad).get(id) ?? null;
+  const held = heldInFlight(design, offeredLoad).get(id) ?? null;
+  // 118 — the held-stream budget (null for kinds without a stated wall).
+  const budget = concurrencyBudgetFor(node);
 
   return (
     <div className="absolute right-3 top-3 w-56 rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-3 text-[var(--color-ink)] shadow-lg">
@@ -327,7 +377,7 @@ export function ScalePanel({ id }: { id: string }) {
             {t.arena.metric.capacity}:{" "}
             <span className="font-mono text-[var(--color-sky-soft)]">
               {Math.round(
-                effectiveCapacity(node) * (1 - routing.tax) * quotaFactor,
+                effectiveCapacity(node, callShape) * (1 - routing.tax) * quotaFactor,
               ).toLocaleString()}{" "}
               req/s
             </span>
@@ -343,11 +393,23 @@ export function ScalePanel({ id }: { id: string }) {
             </p>
           )}
 
-          {/* 113 — held connections/streams, the sync-agent wall. */}
-          <p className="mb-2 text-[10px] text-[var(--color-text-soft)]" title={t.arena.inflightInfo}>
+          {/* 113/118 — held connections/streams vs the container budget. */}
+          <p
+            className="mb-2 text-[10px] text-[var(--color-text-soft)]"
+            title={`${t.arena.inflightInfo} ${budget !== null ? t.arena.inflightBudgetHint : ""}`.trim()}
+          >
             {t.arena.metric.inflight}:{" "}
-            <span className="font-mono text-[var(--color-sky-soft)]">
+            <span
+              className="font-mono"
+              style={{
+                color:
+                  budget !== null && held !== null && held > budget
+                    ? "var(--color-rose)"
+                    : "var(--color-sky-soft)",
+              }}
+            >
               {held === null ? "—" : `~${formatQps(held)}`}
+              {budget !== null && ` / ${formatQps(budget)}`}
             </span>
           </p>
 
@@ -469,6 +531,79 @@ export function ScalePanel({ id }: { id: string }) {
           )}
         </>
       )}
+
+      {/* 120 — the user's own justification for this box (shown for every node,
+          including the client, since any choice is worth a note). */}
+      <NoteField key={id} value={node.note ?? ""} onCommit={(v) => setNodeNote(id, v)} />
+    </div>
+  );
+}
+
+/**
+ * 120 — the shared free-text note editor for a node or an edge. Local state
+ * seeds from the stored note and commits on blur (so the canvas isn't persisted
+ * on every keystroke); the counter tracks the live length against NOTE_MAX.
+ * Remount it with `key={elementId}` so switching elements reseeds the field.
+ */
+function NoteField({ value, onCommit }: { value: string; onCommit: (note: string) => void }) {
+  const t = useT();
+  const [text, setText] = useState(value);
+  return (
+    <div className="mt-2.5">
+      <label className="block text-[10px] text-[var(--color-text-soft)]">{t.arena.noteLabel}</label>
+      <textarea
+        aria-label={t.arena.noteLabel}
+        placeholder={t.arena.notePlaceholder}
+        maxLength={NOTE_MAX}
+        rows={3}
+        value={text}
+        onChange={(ev) => setText(ev.target.value)}
+        onBlur={() => onCommit(text)}
+        className="mt-1 w-full resize-none rounded border border-[var(--color-line)] bg-[var(--color-panel-2)] px-1.5 py-1 text-[10px] leading-snug text-[var(--color-text-soft)]"
+      />
+      <div className="mt-0.5 flex items-center justify-between">
+        {text.trim() ? (
+          <button
+            onClick={() => {
+              setText("");
+              onCommit("");
+            }}
+            className="text-[9px] text-[var(--color-muted)] transition hover:text-[var(--color-rose-soft)]"
+          >
+            {t.arena.noteClear}
+          </button>
+        ) : (
+          <span />
+        )}
+        <span className="text-[9px] text-[var(--color-muted)]">{t.arena.noteCounter(text.length)}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 120 — the selected-connection panel: mirrors the node scale panel's note
+ * field for an edge (a wiring choice — a fallback pool, an async hop — is a
+ * design decision too). Rendered when `selectedEdgeId` is set (mutually
+ * exclusive with the node ScalePanel). Exported for direct testing.
+ */
+export function EdgePanel({ id }: { id: string }) {
+  const t = useT();
+  const edge = useArena((s) => s.edges.find((e) => e.id === id));
+  const { setEdgeNote, removeEdge } = useArena.getState();
+  if (!edge) return null;
+  return (
+    <div className="absolute right-3 top-3 w-56 rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-3 text-[var(--color-ink)] shadow-lg">
+      <div className="flex items-center justify-between gap-1.5">
+        <span className="text-[12px] font-semibold">{t.arena.edgePanelTitle}</span>
+        <button
+          onClick={() => removeEdge(id)}
+          className="rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[10px] text-[var(--color-rose-soft)] transition hover:border-[var(--color-rose)]"
+        >
+          {t.arena.remove}
+        </button>
+      </div>
+      <NoteField key={id} value={edge.note ?? ""} onCommit={(v) => setEdgeNote(id, v)} />
     </div>
   );
 }
