@@ -82,6 +82,7 @@ theory in **[Learn mode](#-learn-mode)**. New to the terms? Start with
 - [🎓 What you'll learn](#-what-youll-learn)
 - [🏗️ Architecture](#️-architecture)
 - [🌐 Network edge — the real ingress chain](#-network-edge--the-real-ingress-chain)
+- [🏟️ Arena — the capacity sandbox](#️-arena--the-capacity-sandbox)
 - [🚀 Quickstart](#-quickstart)
 - [🔌 OpenAI-only](#-openai-only)
 - [🧱 Tech stack](#-tech-stack)
@@ -438,6 +439,69 @@ paranoia level + anomaly threshold, gateway route + rate-limit policy — and wa
 > **Requires Docker.** The network edge only comes up via `docker compose up` (the
 > appliances are containers). In local-dev mode (uvicorn + `npm run dev`) the
 > frontend talks to the backend directly, without the chain.
+
+---
+
+## 🏟️ Arena — the capacity sandbox
+
+The Simulator shows **how one request flows**. The **Arena** shows **what happens at
+scale.** It's a separate page (toggle beside **Learn**) where you **drag component
+boxes onto a canvas, wire them together, pour a population of users onto the design,
+and watch a live model tell you where it breaks** — which box saturates first, the
+end-to-end turn latency, and the LLM bill.
+
+> **What it is — and isn't.** The Arena is an **analytical model** (constitution §3),
+> *not* a live load test. It never sends traffic anywhere and emits **no trace
+> events** — it's frontend-only and saves to your browser's `localStorage`. The
+> numbers are order-of-magnitude **teaching benchmarks** (the LLM figures are anchored
+> to published Azure OpenAI quota tables). The point isn't to predict a real system to
+> the decimal — it's to make **relative bottlenecks legible**, chiefly that the
+> rate-limited LLM is the wall an agent hits long before the databases do.
+
+### Why use it
+
+- **Build intuition for agent bottlenecks** — see for yourself why the LLM tier
+  (hundreds of calls/s per quota block, seconds per call) caps an agent long before
+  the vector DB or the app DB ever would.
+- **Reason about scale before you build** — try vertical vs horizontal scaling, add a
+  cache or an AI gateway, spread a fleet across regions, and watch the numbers move.
+- **Teach & present** — eight ready-made example scenarios and a persistent honesty
+  banner make it a hands-on lab for a talk, a workshop, or onboarding.
+
+### How to use it
+
+1. **Open the Arena** — click **Arena** in the header (a sample design loads on first
+   visit), or pick one of the **Examples** from the dropdown.
+2. **Set the load** — drag the **users** slider and pick a **think time**; the bar
+   converts to req/s via **Little's Law** (`users ÷ think time`) and shows the
+   conversion — *100k users* and *100k req/s* are orders of magnitude apart.
+3. **Compose the architecture** — drag kinds from the palette, wire boxes by dragging
+   between handles (they snap; a new box auto-wires to the selected one), and delete an
+   edge with **Backspace**. Hit **auto-arrange** to reflow the graph by depth.
+4. **Scale & tune** — pick each box's **instance size** (vertical) and **replica count**
+   (horizontal); set the **calls-per-request** fan-out on the LLM/tools; tune the
+   **workload payload** (tokens in/out) that drives capacity, latency and cost.
+5. **Read the result** — each box shows **QPS · utilization · latency · status**; the
+   **bottleneck** is highlighted, an over-capacity box reports an honest **429 shed
+   rate**, and the header shows **end-to-end turn latency** and the **LLM bill**.
+
+### What the model captures
+
+| Concept | What it teaches |
+|---|---|
+| **Little's Law** | Users + think time → offered req/s; a **closed-loop equilibrium** self-throttles the rate when latency backs the population up (demanded vs effective). |
+| **Honest saturation** | Over-capacity boxes shed load (429s) rather than faking a latency figure; near-saturation reads red because the queueing curve is already catastrophic. |
+| **ReAct fan-out** | A `calls-per-request` multiplier models the 2–5 model calls a real turn makes; an always-on **Agent Harness** box makes that fan-out visible without changing any number. |
+| **LLM quota, not CPU** | LLM units are **deployments with a token quota** (TPM ÷ call shape), not containers; pools **sharing a region share the regional quota**, and cross-region hops add latency. |
+| **Routing tax** | A backend wired **directly** to N LLM deployments loses capacity to client-side routing; inserting an **AI gateway** / load balancer gives it back and aggregates a fleet. |
+| **Two LLM bills** | **Provisioned** (reserved capacity, billed even idle) + **usage** (served calls only — 429s aren't billed). |
+| **The connection wall** | Streams held in flight (throughput × time-in-system) vs a per-node connection budget — the limit that actually fells real agent backends first. |
+| **Caches** | A key-value cache (data path) or a **semantic cache** (model path) forwards only its miss fraction downstream. |
+
+The palette spans the **agentic stations** (client · backend · LLM · Vector DB · MCP ·
+App DB) plus the **classic scaling primitives** (CDN · API gateway · AI gateway · load
+balancer · cache · semantic cache · queue · read replica). Designs, annotations and the
+current load all persist locally, and the whole page is **bilingual EN / PT**.
 
 ---
 

@@ -84,6 +84,7 @@ completa no **[Modo Learn](#-modo-learn)**. Novo nos termos? Comece por
 - [🎓 O que você vai aprender](#-o-que-você-vai-aprender)
 - [🏗️ Arquitetura](#️-arquitetura)
 - [🌐 Borda de rede — a cadeia real de entrada](#-borda-de-rede--a-cadeia-real-de-entrada)
+- [🏟️ Arena — o laboratório de capacidade](#️-arena--o-laboratório-de-capacidade)
 - [🚀 Início rápido](#-início-rápido)
 - [🔌 Somente OpenAI](#-somente-openai)
 - [🧱 Stack de tecnologia](#-stack-de-tecnologia)
@@ -449,6 +450,76 @@ com um 403 e a explicação da regra que casou.
 > **Requer Docker.** A borda de rede só sobe via `docker compose up` (os appliances
 > são containers). No modo dev local (uvicorn + `npm run dev`) o frontend fala com o
 > backend diretamente, sem a cadeia.
+
+---
+
+## 🏟️ Arena — o laboratório de capacidade
+
+O Simulador mostra **como uma requisição flui**. A **Arena** mostra **o que acontece
+em escala.** É uma página separada (botão ao lado do **Learn**) onde você **arrasta
+caixas de componentes para um canvas, conecta-as, despeja uma população de usuários
+sobre o desenho e vê um modelo ao vivo dizer onde ele quebra** — qual caixa satura
+primeiro, a latência ponta a ponta do turno e a conta do LLM.
+
+> **O que é — e o que não é.** A Arena é um **modelo analítico** (constituição §3),
+> *não* um teste de carga real. Ela nunca envia tráfego a lugar nenhum e não emite
+> **nenhum evento de trace** — é só frontend e salva no `localStorage` do navegador.
+> Os números são **benchmarks didáticos** de ordem de grandeza (as cifras do LLM são
+> ancoradas nas tabelas públicas de cota do Azure OpenAI). O objetivo não é prever um
+> sistema real na casa decimal — é tornar os **gargalos relativos legíveis**,
+> principalmente que o LLM com rate limit é o muro que um agente bate muito antes dos
+> bancos de dados.
+
+### Para que usar
+
+- **Criar intuição sobre gargalos de agente** — veja você mesmo por que a camada de
+  LLM (centenas de chamadas/s por bloco de cota, segundos por chamada) limita um
+  agente muito antes do vector DB ou do banco relacional.
+- **Raciocinar sobre escala antes de construir** — experimente escala vertical vs
+  horizontal, adicione um cache ou um AI gateway, espalhe uma frota por regiões e veja
+  os números se moverem.
+- **Ensinar & apresentar** — oito cenários de exemplo prontos e um banner de honestidade
+  persistente fazem dela um laboratório prático para uma palestra, um workshop ou
+  onboarding.
+
+### Como usar
+
+1. **Abra a Arena** — clique em **Arena** no cabeçalho (um desenho de amostra carrega
+   na primeira visita), ou escolha um dos **Exemplos** no dropdown.
+2. **Defina a carga** — arraste o slider de **usuários** e escolha um **think time**; a
+   barra converte para req/s pela **Lei de Little** (`usuários ÷ think time`) e mostra a
+   conversão — *100 mil usuários* e *100 mil req/s* diferem por ordens de grandeza.
+3. **Componha a arquitetura** — arraste os tipos da paleta, conecte as caixas arrastando
+   entre os handles (elas dão snap; uma caixa nova auto-conecta à selecionada) e apague
+   uma aresta com **Backspace**. Use **auto-arrange** para reorganizar o grafo por
+   profundidade.
+4. **Escale & ajuste** — escolha o **tamanho da instância** (vertical) e a **quantidade
+   de réplicas** (horizontal) de cada caixa; defina o fan-out de **chamadas por
+   requisição** no LLM/tools; ajuste o **payload da carga** (tokens de entrada/saída) que
+   move capacidade, latência e custo.
+5. **Leia o resultado** — cada caixa mostra **QPS · utilização · latência · status**; o
+   **gargalo** é destacado, uma caixa acima da capacidade reporta uma **taxa de descarte
+   429** honesta, e o cabeçalho mostra a **latência ponta a ponta do turno** e a **conta
+   do LLM**.
+
+### O que o modelo captura
+
+| Conceito | O que ensina |
+|---|---|
+| **Lei de Little** | Usuários + think time → req/s ofertado; um **equilíbrio de malha fechada** auto-regula a taxa quando a latência represa a população (demandado vs efetivo). |
+| **Saturação honesta** | Caixas acima da capacidade descartam carga (429s) em vez de forjar uma latência; perto da saturação fica vermelho porque a curva de fila já é catastrófica. |
+| **Fan-out do ReAct** | Um multiplicador de **chamadas por requisição** modela as 2–5 chamadas ao modelo que um turno real faz; uma caixa **Agent Harness** sempre presente torna esse fan-out visível sem mudar nenhum número. |
+| **Cota de LLM, não CPU** | Unidades de LLM são **deployments com cota de tokens** (TPM ÷ formato da chamada), não containers; pools **na mesma região dividem a cota regional**, e hops entre regiões somam latência. |
+| **Imposto de roteamento** | Um backend ligado **direto** a N deployments de LLM perde capacidade no roteamento client-side; inserir um **AI gateway** / load balancer devolve essa capacidade e agrega a frota. |
+| **As duas contas do LLM** | **Provisionado** (capacidade reservada, cobrada mesmo ociosa) + **uso** (só chamadas atendidas — 429s não são cobrados). |
+| **O muro de conexões** | Streams em voo (throughput × tempo-no-sistema) vs um orçamento de conexões por nó — o limite que de fato derruba backends de agente primeiro. |
+| **Caches** | Um cache chave-valor (caminho de dados) ou um **cache semântico** (caminho do modelo) repassa adiante apenas a fração de miss. |
+
+A paleta abrange as **estações agênticas** (client · backend · LLM · Vector DB · MCP ·
+App DB) mais as **primitivas clássicas de escala** (CDN · API gateway · AI gateway ·
+load balancer · cache · cache semântico · fila · réplica de leitura). Desenhos,
+anotações e a carga atual persistem localmente, e a página inteira é **bilíngue EN /
+PT**.
 
 ---
 
