@@ -88,17 +88,30 @@ export interface Strings {
     thinkTime: string;
     thinkTimeHint: string;
     usersReadout: (users: string, rps: string) => string;
+    // 110 — closed-loop: when latency self-throttles the population, the header
+    // shows the demanded rate → the effective equilibrium rate.
+    effectiveRate: (rps: string) => string;
+    closedLoopHint: string;
     // 103 — agent fan-out + honest-overload + derived readouts.
     callsPerRequest: string;
     callsHint: string;
     shedding: (n: string) => string;
+    // 108 — the honest control-bar readout when any node sheds: a latency figure
+    // past saturation would be fiction, so the header reports the shed rate.
+    saturatedHeader: (n: string) => string;
+    saturatedHint: string;
     e2eLatency: string;
     e2eLatencyHint: string;
     llmCost: string;
     llmCostHint: string;
+    // 111 — the two LLM bills: provisioned capacity (billed even idle) + usage.
+    llmCostProvisioned: (v: string) => string;
+    llmCostUsage: (v: string) => string;
     reset: string;
     scaling: string; // the selected-node scaling panel heading
-    metric: { qps: string; latency: string; util: string; capacity: string };
+    metric: { qps: string; latency: string; util: string; capacity: string; inflight: string };
+    // 113 — the held-in-flight explainer (Little's Law: thr × time held open).
+    inflightInfo: string;
     status: { healthy: string; warning: string; critical: string; unreachable: string };
     size: string;
     // 104 — the ℹ️ explainer toggle + the capacity formula hint. The horizontal
@@ -107,6 +120,9 @@ export interface Strings {
     capacityHint: string;
     // 105 — the client-side LLM routing tax note (pct already formatted, e.g. "38%").
     routingTax: (pct: string, n: number) => string;
+    // 114 — the regional LLM quota note (a region caps provisionable capacity).
+    quotaLimited: (region: string) => string;
+    quotaHint: string;
     // 106 — the per-node region annotation (multi-region pools).
     region: string;
     regionHint: string;
@@ -114,6 +130,11 @@ export interface Strings {
     // 107 — wiring gestures taught in the palette footer.
     autoWireHint: string;
     edgeHint: string;
+    // 115 — builder nudges: the fan-out suggestion chip + the units-ceiling hint.
+    fanoutNudge: string;
+    fanoutApply: string;
+    fanoutDismiss: string;
+    replicasCeilingHint: string;
     sizes: { small: string; medium: string; large: string; xlarge: string };
     cacheHitRatio: string;
     bottleneck: string;
@@ -1301,20 +1322,37 @@ const en: Strings = {
     usersLabel: "Concurrent users",
     thinkTime: "Think time",
     thinkTimeHint:
-      "Seconds between requests per user — req/s = users ÷ think time (Little's Law)",
+      "Seconds between requests per user — req/s = users ÷ think time (Little's Law). The single most decisive knob: chat users typically pause 30–120s between messages, and halving it doubles the load.",
     usersReadout: (users, rps) => `${users} users ≈ ${rps} req/s`,
+    effectiveRate: (rps) => `→ ${rps} req/s effective`,
+    closedLoopHint:
+      "A user waiting on a slow answer isn't sending the next message: the load self-throttles to users ÷ (think time + response time). The gap between demanded and effective IS the latency cost.",
     callsPerRequest: "Calls per request",
     callsHint:
       "An agent turn makes 2–5 model calls (ReAct loop). Set it on the AI Gateway OR the LLM behind it — not both.",
     shedding: (n) => `dropping ~${n} req/s (429)`,
+    saturatedHeader: (n) => `Saturated — shedding ~${n} req/s (429)`,
+    saturatedHint:
+      "Past capacity a real API sheds with 429s; a latency figure would be fiction. Scale the bottleneck to get a latency again.",
     e2eLatency: "End-to-end latency",
-    e2eLatencyHint: "Sum of node latencies along the slowest (critical) path",
+    e2eLatencyHint:
+      "Modeled latency of one agent turn: serialized stages sum, and k calls per request cost k × the model's latency. Worst-case path (cache misses included).",
     llmCost: "LLM cost",
     llmCostHint:
-      "≈ $0.0016 per call (2k input + 500 output tokens at gpt-4.1-mini prices) × the modeled LLM call rate",
+      "Teaching estimates: ~$100/h per medium deployment (provisioned, billed even idle — think PTUs) plus ~$0.0016 per agent-shaped call (~2k in / 500 out at gpt-4.1-mini prices). Break-even ≈ 35% utilization.",
+    llmCostProvisioned: (v) => `~$${v}/h provisioned`,
+    llmCostUsage: (v) => `~$${v}/h usage`,
     reset: "Reset canvas",
     scaling: "Scaling",
-    metric: { qps: "QPS", latency: "Latency", util: "Utilization", capacity: "Capacity" },
+    metric: {
+      qps: "QPS",
+      latency: "Latency",
+      util: "Utilization",
+      capacity: "Capacity",
+      inflight: "In flight",
+    },
+    inflightInfo:
+      "Requests this component is holding open right now (Little's Law: throughput × time waiting, including everything downstream it waits on). A synchronous agent backend holds its connection/SSE stream for the WHOLE turn — connection pools and memory run out long before CPU does.",
     status: {
       healthy: "Healthy",
       warning: "Warning",
@@ -1326,12 +1364,20 @@ const en: Strings = {
     capacityHint: "capacity = component base × instance size × units",
     routingTax: (pct, n) =>
       `Client-side LLM routing: −${pct} capacity (managing ${n} deployments — an AI Gateway removes this)`,
+    quotaLimited: (region) => `Quota-limited — ${region} is at its regional LLM quota`,
+    quotaHint:
+      "A region caps how much model capacity you can provision (subscription quota / PTU availability). Past the cap, more deployments in the same region add nothing — add another region or a higher quota tier.",
     region: "Region",
     regionHint:
       "Pools in different regions survive a region outage, cut latency near users and meet data residency. An annotation for now — challenges will score it.",
     regionNone: "No region",
     autoWireHint: "Tip: with a node selected, a dropped component is wired from it automatically",
     edgeHint: "Click a link and press Backspace to remove it",
+    fanoutNudge: "An agent turn makes 2–5 model calls — set calls per request = 2?",
+    fanoutApply: "Set to 2",
+    fanoutDismiss: "Keep 1",
+    replicasCeilingHint:
+      "At the per-pool max — real fleets escape by adding another pool/region or a higher quota tier.",
     sizes: { small: "Small", medium: "Medium", large: "Large", xlarge: "XLarge" },
     cacheHitRatio: "Cache hit ratio",
     bottleneck: "Bottleneck",
@@ -2636,20 +2682,37 @@ const pt: Strings = {
     usersLabel: "Usuários simultâneos",
     thinkTime: "Tempo entre mensagens",
     thinkTimeHint:
-      "Segundos entre requests por usuário — req/s = usuários ÷ tempo entre mensagens (Lei de Little)",
+      "Segundos entre requests por usuário — req/s = usuários ÷ tempo entre mensagens (Lei de Little). O knob mais decisivo de todos: usuários de chat tipicamente pausam 30–120s entre mensagens, e reduzir pela metade dobra a carga.",
     usersReadout: (users, rps) => `${users} usuários ≈ ${rps} req/s`,
+    effectiveRate: (rps) => `→ ${rps} req/s efetivos`,
+    closedLoopHint:
+      "Um usuário esperando uma resposta lenta não envia a próxima mensagem: a carga se auto-regula para usuários ÷ (tempo entre mensagens + tempo de resposta). A diferença entre demandado e efetivo É o custo da latência.",
     callsPerRequest: "Chamadas por request",
     callsHint:
       "Um turno de agente faz 2–5 chamadas de modelo (loop ReAct). Configure no AI Gateway OU no LLM atrás dele — nunca nos dois.",
     shedding: (n) => `derrubando ~${n} req/s (429)`,
+    saturatedHeader: (n) => `Saturado — descartando ~${n} req/s (429)`,
+    saturatedHint:
+      "Acima da capacidade uma API real descarta com 429; um número de latência seria ficção. Escale o gargalo para voltar a ter latência.",
     e2eLatency: "Latência fim-a-fim",
-    e2eLatencyHint: "Soma das latências ao longo do caminho (ramo) mais lento",
+    e2eLatencyHint:
+      "Latência modelada de um turno do agente: etapas em sequência somam, e k chamadas por request custam k × a latência do modelo. Caminho de pior caso (incluindo cache miss).",
     llmCost: "Custo do LLM",
     llmCostHint:
-      "≈ US$ 0,0016 por chamada (2k tokens de entrada + 500 de saída a preços do gpt-4.1-mini) × a taxa de chamadas de LLM modelada",
+      "Estimativas didáticas: ~US$ 100/h por deployment médio (provisionado, cobrado mesmo ocioso — pense em PTUs) mais ~US$ 0,0016 por chamada de agente (~2k entrada / 500 saída a preços do gpt-4.1-mini). Ponto de equilíbrio ≈ 35% de utilização.",
+    llmCostProvisioned: (v) => `~$${v}/h provisionado`,
+    llmCostUsage: (v) => `~$${v}/h de uso`,
     reset: "Limpar canvas",
     scaling: "Escala",
-    metric: { qps: "QPS", latency: "Latência", util: "Utilização", capacity: "Capacidade" },
+    metric: {
+      qps: "QPS",
+      latency: "Latência",
+      util: "Utilização",
+      capacity: "Capacidade",
+      inflight: "Em voo",
+    },
+    inflightInfo:
+      "Requests que este componente mantém abertos agora (Lei de Little: vazão × tempo de espera, incluindo tudo que ele aguarda a jusante). Um backend de agente síncrono segura a conexão/stream SSE o turno INTEIRO — pools de conexão e memória acabam muito antes da CPU.",
     status: {
       healthy: "Saudável",
       warning: "Alerta",
@@ -2661,6 +2724,9 @@ const pt: Strings = {
     capacityHint: "capacidade = base do componente × tamanho da instância × unidades",
     routingTax: (pct, n) =>
       `Roteamento de LLM no app: −${pct} de capacidade (gerenciando ${n} deployments — um AI Gateway remove isso)`,
+    quotaLimited: (region) => `Limitado por cota — ${region} atingiu a cota regional de LLM`,
+    quotaHint:
+      "Uma região limita quanta capacidade de modelo você consegue provisionar (cota da assinatura / disponibilidade de PTU). Acima do teto, mais deployments na mesma região não adicionam nada — adicione outra região ou um tier de cota maior.",
     region: "Região",
     regionHint:
       "Pools em regiões diferentes sobrevivem à queda de uma região, reduzem a latência perto dos usuários e atendem residência de dados. Por ora é uma anotação — os desafios vão pontuar isso.",
@@ -2668,6 +2734,11 @@ const pt: Strings = {
     autoWireHint:
       "Dica: com um nó selecionado, um componente solto no canvas já é ligado a partir dele",
     edgeHint: "Clique numa ligação e pressione Backspace para removê-la",
+    fanoutNudge: "Um turno de agente faz de 2 a 5 chamadas de modelo — definir chamadas por request = 2?",
+    fanoutApply: "Definir como 2",
+    fanoutDismiss: "Manter 1",
+    replicasCeilingHint:
+      "No máximo por pool — frotas reais escapam adicionando outro pool/região ou um tier de cota maior.",
     sizes: { small: "Pequeno", medium: "Médio", large: "Grande", xlarge: "Extra grande" },
     cacheHitRatio: "Taxa de acerto do cache",
     bottleneck: "Gargalo",

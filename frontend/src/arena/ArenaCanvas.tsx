@@ -32,7 +32,15 @@ import {
   type ArenaKind,
   type InstanceSize,
 } from "./components";
-import { computeMetrics, effectiveCapacity, routingTaxFor } from "./model";
+import { formatQps } from "./format";
+import {
+  computeMetrics,
+  effectiveCapacity,
+  heldInFlight,
+  quotaFactorsFor,
+  routingTaxFor,
+} from "./model";
+import { fanoutNudges } from "./nudges";
 import { ARENA_DND_MIME } from "./Palette";
 import { useArena } from "./store";
 
@@ -53,8 +61,25 @@ export function ArenaCanvas() {
   const offeredLoad = useArena((s) => s.offeredLoad);
   // 107 — node selection lives in the store (drives the panel + auto-wire).
   const selectedId = useArena((s) => s.selectedId);
-  const { dropNode, dragNode, moveNode, removeNode, removeEdge, connect, select } =
-    useArena.getState();
+  const dismissedNudges = useArena((s) => s.dismissedNudges);
+  const {
+    dropNode,
+    dragNode,
+    moveNode,
+    removeNode,
+    removeEdge,
+    connect,
+    select,
+    setCallsPerRequest,
+    dismissNudge,
+  } = useArena.getState();
+
+  // 115 — the fan-out suggestion: derived from the design, suggested, never
+  // auto-applied (the audited hand-built design ran the LLM path at cpr=1).
+  const nudges = useMemo(
+    () => fanoutNudges({ nodes, edges }).filter((nd) => !dismissedNudges.includes(nd.targetId)),
+    [nodes, edges, dismissedNudges],
+  );
 
   // Edge selection is view-only state (which link is highlighted for deletion).
   const [selectedEdges, setSelectedEdges] = useState<ReadonlySet<string>>(new Set());
@@ -193,6 +218,35 @@ export function ArenaCanvas() {
         </div>
       )}
 
+      {/* 115 — one chip per active fan-out nudge; Apply is one click, dismiss
+          persists per node (and is pruned if the wiring changes). */}
+      {nudges.length > 0 && (
+        <div className="absolute left-3 top-3 z-10 flex w-60 flex-col gap-2">
+          {nudges.map((nd) => (
+            <div
+              key={nd.targetId}
+              className="rounded-xl border border-[var(--color-warn)] bg-[var(--color-panel)] p-2.5 text-[10px] leading-snug text-[var(--color-text-soft)] shadow-lg"
+            >
+              {t.arena.fanoutNudge}
+              <div className="mt-1.5 flex gap-1.5">
+                <button
+                  onClick={() => setCallsPerRequest(nd.targetId, 2)}
+                  className="rounded border border-[var(--color-sky)] px-1.5 py-0.5 text-[10px] text-[var(--color-sky-soft)] transition hover:bg-[color-mix(in_srgb,var(--color-sky)_12%,transparent)]"
+                >
+                  {t.arena.fanoutApply}
+                </button>
+                <button
+                  onClick={() => dismissNudge(nd.targetId)}
+                  className="rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[10px] text-[var(--color-muted)] transition hover:border-[var(--color-text-soft)]"
+                >
+                  {t.arena.fanoutDismiss}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {selected && <ScalePanel id={selected.id} />}
     </div>
   );
@@ -215,6 +269,7 @@ export function ScalePanel({ id }: { id: string }) {
   const node = useArena((s) => s.nodes.find((n) => n.id === id));
   const nodes = useArena((s) => s.nodes);
   const edges = useArena((s) => s.edges);
+  const offeredLoad = useArena((s) => s.offeredLoad);
   const { setSize, setReplicas, setHitRatio, setCallsPerRequest, setRegion, removeNode } =
     useArena.getState();
   if (!node) return null;
@@ -223,6 +278,11 @@ export function ScalePanel({ id }: { id: string }) {
   // 105 — client-side LLM routing overhead this node pays (0 unless it holds
   // LLM deployment endpoints directly; an AI Gateway in between removes it).
   const routing = routingTaxFor({ nodes, edges }, id);
+  // 114 — the regional quota squeeze on this pool (1 when under quota).
+  const quotaFactor = quotaFactorsFor({ nodes, edges }).get(id) ?? 1;
+  // 113 — requests this node is holding open (Little's Law; null when the
+  // awaited path sheds — a figure built on the clamped latency would be fiction).
+  const held = heldInFlight({ nodes, edges }, offeredLoad).get(id) ?? null;
 
   return (
     <div className="absolute right-3 top-3 w-56 rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-3 text-[var(--color-ink)] shadow-lg">
@@ -266,7 +326,28 @@ export function ScalePanel({ id }: { id: string }) {
           <p className="mb-2 text-[10px] text-[var(--color-text-soft)]" title={t.arena.capacityHint}>
             {t.arena.metric.capacity}:{" "}
             <span className="font-mono text-[var(--color-sky-soft)]">
-              {Math.round(effectiveCapacity(node) * (1 - routing.tax)).toLocaleString()} req/s
+              {Math.round(
+                effectiveCapacity(node) * (1 - routing.tax) * quotaFactor,
+              ).toLocaleString()}{" "}
+              req/s
+            </span>
+          </p>
+
+          {/* 114 — the regional quota bites: more units here add nothing. */}
+          {quotaFactor < 1 && (
+            <p
+              title={t.arena.quotaHint}
+              className="mb-2 rounded-lg bg-[color-mix(in_srgb,var(--color-warn)_12%,transparent)] p-1.5 text-[9.5px] leading-snug text-[var(--color-text-soft)]"
+            >
+              {t.arena.quotaLimited(node.region ?? t.arena.regionNone)}
+            </p>
+          )}
+
+          {/* 113 — held connections/streams, the sync-agent wall. */}
+          <p className="mb-2 text-[10px] text-[var(--color-text-soft)]" title={t.arena.inflightInfo}>
+            {t.arena.metric.inflight}:{" "}
+            <span className="font-mono text-[var(--color-sky-soft)]">
+              {held === null ? "—" : `~${formatQps(held)}`}
             </span>
           </p>
 
@@ -339,6 +420,13 @@ export function ScalePanel({ id }: { id: string }) {
             aria-label={scaling.unit[lang]}
           />
 
+          {/* 115 — the slider ceiling has a story: escape via pools/regions/tier. */}
+          {node.replicas >= 20 && (
+            <p className="mt-1 rounded-lg bg-[color-mix(in_srgb,var(--color-warn)_12%,transparent)] p-1.5 text-[9.5px] leading-snug text-[var(--color-text-soft)]">
+              {t.arena.replicasCeilingHint}
+            </p>
+          )}
+
           {/* 103 — the ReAct fan-out: calls this node receives per user request. */}
           {CALLS_CONFIGURABLE.has(node.kind) && (
             <>
@@ -361,7 +449,8 @@ export function ScalePanel({ id }: { id: string }) {
             </>
           )}
 
-          {node.kind === "cache" && (
+          {/* 112 — both cache-like kinds expose the hit-ratio knob. */}
+          {(node.kind === "cache" || node.kind === "semanticCache") && (
             <>
               <label className="mt-2.5 block text-[10px] text-[var(--color-text-soft)]">
                 {t.arena.cacheHitRatio}:{" "}

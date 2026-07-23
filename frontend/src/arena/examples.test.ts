@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_EXAMPLE_ID, EXAMPLES, defaultDesign } from "./examples";
-import { computeMetrics, routingTaxFor, rpsOf } from "./model";
+import { computeMetrics, equilibriumRps, routingTaxFor, rpsOf } from "./model";
 
 const byId = (id: string) => EXAMPLES.find((e) => e.id === id)!;
 const loadOf = (d: { users: number; thinkTimeSec: number }) => rpsOf(d.users, d.thinkTimeSec);
@@ -37,7 +37,10 @@ describe("arena example library (101 AC3, AC6)", () => {
     const d = defaultDesign();
     expect(d.nodes.length).toBeGreaterThanOrEqual(3);
     expect(d.edges.length).toBeGreaterThan(0);
-    expect(d.offeredLoad).toBe(rpsOf(d.users, d.thinkTimeSec));
+    // 110 — the seeded rate is the closed-loop equilibrium of the sample design.
+    expect(d.offeredLoad).toBe(
+      Math.round(equilibriumRps({ nodes: d.nodes, edges: d.edges }, d.users, d.thinkTimeSec)),
+    );
   });
 });
 
@@ -110,6 +113,39 @@ describe("103 AC7 — defensible presets", () => {
     };
     expect(distinctRegions("prod")).toBe(2); // us-east / eu-west
     expect(distinctRegions("llm-fleet")).toBe(4); // four pools, four regions
+  });
+
+  it("semantic-cache preset: the cache is what keeps the fleet healthy (112 AC4)", () => {
+    const d = byId("semantic-cache").build();
+    const rps = loadOf(d);
+    const llm = d.nodes.find((n) => n.kind === "llm")!;
+    const sc = d.nodes.find((n) => n.kind === "semanticCache")!;
+    expect(computeMetrics({ nodes: d.nodes, edges: d.edges }, rps).get(llm.id)!.status).toBe(
+      "healthy",
+    );
+
+    // Remove the semantic cache (rewire its parent straight to the LLM) and the
+    // same fleet saturates — the cache IS the third lever.
+    const parent = d.edges.find((e) => e.target === sc.id)!.source;
+    const without = {
+      nodes: d.nodes.filter((n) => n.id !== sc.id),
+      edges: [
+        ...d.edges.filter((e) => e.source !== sc.id && e.target !== sc.id),
+        { id: `${parent}-${llm.id}`, source: parent, target: llm.id },
+      ],
+    };
+    expect(computeMetrics(without, rps).get(llm.id)!.status).toBe("critical");
+  });
+
+  it("every preset's stated claims hold against the model (115 AC5)", () => {
+    for (const ex of EXAMPLES) {
+      const d = ex.build();
+      expect(ex.claims.demandRps, `${ex.id} demand`).toBe(rpsOf(d.users, d.thinkTimeSec));
+      const m = computeMetrics({ nodes: d.nodes, edges: d.edges }, ex.claims.demandRps);
+      for (const llm of d.nodes.filter((n) => n.kind === "llm")) {
+        expect(m.get(llm.id)!.status, `${ex.id} ${llm.id}`).toBe(ex.claims.llm);
+      }
+    }
   });
 
   it("agent-tools exercises the ReAct fan-out on LLM and MCP (calls per request > 1)", () => {

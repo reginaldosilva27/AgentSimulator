@@ -14,10 +14,9 @@ import { useMemo } from "react";
 
 import { useLang, useT } from "../i18n";
 import { ArenaCanvas } from "./ArenaCanvas";
-import { LLM_COST_PER_CALL_USD } from "./components";
 import { EXAMPLES } from "./examples";
-import { formatLatency } from "./format";
-import { computeMetrics, endToEndLatencyMs } from "./model";
+import { formatLatency, formatQps } from "./format";
+import { computeMetrics, endToEndLatencyMs, llmCost, rpsOf } from "./model";
 import { Palette } from "./Palette";
 import { useArena } from "./store";
 
@@ -37,17 +36,26 @@ export function ArenaPage() {
   const locale = lang === "pt" ? "pt-BR" : "en-US";
 
   // 103 AC5/AC6 — the derived readouts, recomputed on every edit (pure + cheap).
-  const { e2eMs, llmCostPerHour } = useMemo(() => {
-    if (nodes.length === 0) return { e2eMs: 0, llmCostPerHour: 0 };
+  // 108 — plus the total shed rate: when anything saturates, the header tells the
+  // shed story instead of a fictional (0.99-clamped) latency figure.
+  // 111 — the LLM bill is two-sided: provisioned (billed even idle) + usage.
+  const { e2eMs, cost, totalShed } = useMemo(() => {
+    if (nodes.length === 0) {
+      return { e2eMs: 0, cost: { provisionedPerHour: 0, usagePerHour: 0 }, totalShed: 0 };
+    }
     const design = { nodes, edges };
     const metrics = computeMetrics(design, offeredLoad);
-    let llmCalls = 0;
-    for (const n of nodes) if (n.kind === "llm") llmCalls += metrics.get(n.id)!.throughput;
+    let shed = 0;
+    for (const n of nodes) shed += metrics.get(n.id)!.shedRps;
     return {
       e2eMs: endToEndLatencyMs(design, offeredLoad),
-      llmCostPerHour: llmCalls * LLM_COST_PER_CALL_USD * 3600,
+      cost: llmCost(design, offeredLoad),
+      totalShed: shed,
     };
   }, [nodes, edges, offeredLoad]);
+
+  const fmtUsd = (v: number) =>
+    v >= 100 ? Math.round(v).toLocaleString(locale) : v.toFixed(2);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -85,35 +93,63 @@ export function ArenaPage() {
               </option>
             ))}
           </select>
-          <span
-            className="whitespace-nowrap text-right font-mono text-[11px] text-[var(--color-sky-soft)]"
-            title={t.arena.thinkTimeHint}
-          >
-            {t.arena.usersReadout(
-              users.toLocaleString(locale),
-              offeredLoad.toLocaleString(locale),
-            )}
-          </span>
+          {/* 110 — demanded (users ÷ think) vs effective (closed-loop equilibrium):
+              when latency throttles the population by >5%, both figures show. */}
+          {(() => {
+            const demand = rpsOf(users, thinkTimeSec);
+            const throttled = demand > 0 && (demand - offeredLoad) / demand > 0.05;
+            return (
+              <span
+                className="whitespace-nowrap text-right font-mono text-[11px] text-[var(--color-sky-soft)]"
+                title={throttled ? t.arena.closedLoopHint : t.arena.thinkTimeHint}
+              >
+                {t.arena.usersReadout(
+                  users.toLocaleString(locale),
+                  demand.toLocaleString(locale),
+                )}
+                {throttled && (
+                  <span className="text-[var(--color-warn)]">
+                    {" "}
+                    {t.arena.effectiveRate(offeredLoad.toLocaleString(locale))}
+                  </span>
+                )}
+              </span>
+            );
+          })()}
         </div>
 
         {/* 103 — the two architect readouts, derived from the same pure model. */}
         {nodes.length > 0 && (
           <div className="flex items-center gap-3 whitespace-nowrap text-[10.5px] text-[var(--color-muted)]">
-            <span title={t.arena.e2eLatencyHint}>
-              {t.arena.e2eLatency}:{" "}
-              <span className="font-mono text-[var(--color-text-soft)]">
-                {formatLatency(e2eMs)}
+            {totalShed > 0 ? (
+              // 108 AC1/AC2 — one story per screen: the node box already shows "—"
+              // for a shedding node; the header must not price the queue either.
+              <span
+                title={t.arena.saturatedHint}
+                className="font-medium text-[var(--color-rose)]"
+              >
+                {t.arena.saturatedHeader(formatQps(totalShed))}
               </span>
-            </span>
-            {llmCostPerHour > 0 && (
+            ) : (
+              <span title={t.arena.e2eLatencyHint}>
+                {t.arena.e2eLatency}:{" "}
+                <span className="font-mono text-[var(--color-text-soft)]">
+                  {formatLatency(e2eMs)}
+                </span>
+              </span>
+            )}
+            {(cost.provisionedPerHour > 0 || cost.usagePerHour > 0) && (
               <span title={t.arena.llmCostHint}>
                 {t.arena.llmCost}:{" "}
                 <span className="font-mono text-[var(--color-text-soft)]">
-                  ~$
-                  {llmCostPerHour >= 100
-                    ? Math.round(llmCostPerHour).toLocaleString(locale)
-                    : llmCostPerHour.toFixed(2)}
-                  /h
+                  {[
+                    cost.provisionedPerHour > 0
+                      ? t.arena.llmCostProvisioned(fmtUsd(cost.provisionedPerHour))
+                      : null,
+                    cost.usagePerHour > 0 ? t.arena.llmCostUsage(fmtUsd(cost.usagePerHour)) : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" + ")}
                 </span>
               </span>
             )}

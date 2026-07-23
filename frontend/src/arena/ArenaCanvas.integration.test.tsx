@@ -3,10 +3,11 @@
 // Seeds a design in the store and asserts the live node boxes render their
 // modeled metrics and that the saturated LLM lights up as the bottleneck.
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { UI } from "../i18n/strings";
 import { ArenaCanvas, edgeIdsToRemove } from "./ArenaCanvas";
 import { BENCHMARKS } from "./components";
 import { useArena } from "./store";
@@ -74,6 +75,36 @@ describe("ArenaCanvas real render (integration)", () => {
     const handles = container.querySelectorAll(".arena-handle");
     expect(handles.length).toBeGreaterThan(0);
     expect((handles[0] as HTMLElement).style.width).toBe("14px");
+  });
+});
+
+describe("fan-out nudge chip (115 AC1/AC2)", () => {
+  // The seeded design wires backend-1 → llm-2 with the silent cpr default of 1 —
+  // exactly the state the nudge exists for.
+  it("renders the suggestion and one-click Apply sets calls per request = 2", () => {
+    render(
+      <ReactFlowProvider>
+        <ArenaCanvas />
+      </ReactFlowProvider>,
+    );
+    expect(screen.getByText(UI.en.arena.fanoutNudge)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: UI.en.arena.fanoutApply }));
+    expect(useArena.getState().nodes.find((n) => n.id === "llm-2")!.callsPerRequest).toBe(2);
+    expect(screen.queryByText(UI.en.arena.fanoutNudge)).toBeNull(); // resolved
+  });
+
+  it("dismiss hides it without changing the node", () => {
+    render(
+      <ReactFlowProvider>
+        <ArenaCanvas />
+      </ReactFlowProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: UI.en.arena.fanoutDismiss }));
+    expect(screen.queryByText(UI.en.arena.fanoutNudge)).toBeNull();
+    expect(
+      useArena.getState().nodes.find((n) => n.id === "llm-2")!.callsPerRequest,
+    ).toBeUndefined();
   });
 });
 

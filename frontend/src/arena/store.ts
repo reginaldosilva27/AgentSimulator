@@ -10,14 +10,16 @@ import { create } from "zustand";
 
 import {
   ARENA_REGIONS,
-  DEFAULT_HIT_RATIO,
+  defaultHitRatioFor,
   INSTANCE_SIZES,
+  isCacheLike,
   type ArenaKind,
   type ArenaRegion,
   type InstanceSize,
 } from "./components";
 import { EXAMPLES, defaultDesign } from "./examples";
-import { rpsOf, type ArenaEdge, type ArenaNodeSpec } from "./model";
+import { equilibriumRps, type ArenaEdge, type ArenaNodeSpec } from "./model";
+import { fanoutNudges } from "./nudges";
 
 /** A placed node: the model spec plus its canvas position. */
 export interface ArenaNode extends ArenaNodeSpec {
@@ -30,12 +32,16 @@ export interface ArenaNode extends ArenaNodeSpec {
 export interface ArenaState {
   nodes: ArenaNode[];
   edges: ArenaEdge[];
-  /** The modeled request rate (rps) — always `round(users / thinkTimeSec)` (103 AC1). */
+  /** The modeled request rate (rps). 110 — DERIVED: the closed-loop equilibrium
+   *  `round(equilibriumRps(design, users, thinkTimeSec))`, never set directly. */
   offeredLoad: number;
   /** 103 — Little's Law drive: concurrent users … */
   users: number;
   /** … each sending one request every `thinkTimeSec` seconds. */
   thinkTimeSec: number;
+  /** 115 — fan-out nudges the user waved away (target node ids). Pruned whenever
+   *  the underlying nudge stops being derivable, so a re-wire nudges again. */
+  dismissedNudges: string[];
 }
 
 export const ARENA_STORAGE_KEY = "agentsim.arena";
@@ -87,7 +93,19 @@ export function loadArena(): ArenaState {
           typeof parsed.users === "number" && parsed.users >= 0
             ? parsed.users
             : offeredLoad * thinkTimeSec;
-        return { nodes, edges, offeredLoad: rpsOf(users, thinkTimeSec), users, thinkTimeSec };
+        // 115 — pre-115 blobs have no dismissedNudges: default to [].
+        const dismissedNudges = Array.isArray(parsed.dismissedNudges)
+          ? parsed.dismissedNudges.filter((d): d is string => typeof d === "string")
+          : [];
+        // 110 — the effective rate is the closed-loop equilibrium of THIS design.
+        return {
+          nodes,
+          edges,
+          offeredLoad: Math.round(equilibriumRps({ nodes, edges }, users, thinkTimeSec)),
+          users,
+          thinkTimeSec,
+          dismissedNudges,
+        };
       }
     } catch {
       // fall through
@@ -99,6 +117,7 @@ export function loadArena(): ArenaState {
     offeredLoad: DEFAULT_LOAD,
     users: DEFAULT_USERS,
     thinkTimeSec: DEFAULT_THINK_SEC,
+    dismissedNudges: [],
   };
 }
 
@@ -145,6 +164,9 @@ interface ArenaStore extends ArenaState {
   setCallsPerRequest: (id: string, calls: number) => void;
   /** 106 — annotate a node's region (null clears; invalid codes ignored). */
   setRegion: (id: string, region: string | null) => void;
+  /** 115 — wave a fan-out nudge away for this target node (persisted; pruned
+   *  when the nudge stops being derivable). Never changes the node itself. */
+  dismissNudge: (id: string) => void;
   /** Replace the whole canvas with a design (e.g. an example preset) + persist. */
   loadDesign: (design: Pick<ArenaState, "nodes" | "edges" | "users" | "thinkTimeSec">) => void;
   /** The preset currently shown in the canvas (drives the Examples dropdown). Transient
@@ -162,9 +184,17 @@ function commit(set: (s: Partial<ArenaState>) => void, next: ArenaState): void {
 
 export const useArena = create<ArenaStore>((set, get) => {
   const init = loadArena();
+  // 110 — offeredLoad is DERIVED on every commit: any edit that changes the
+  // design, the population or the think time shifts the closed-loop equilibrium.
+  // 115 — dismissals are pruned to nudges still derivable from the design, so
+  // removing the wiring (and re-adding it later) makes the nudge fire again.
   const save = (patch: Partial<ArenaState>) => {
-    const { nodes, edges, offeredLoad, users, thinkTimeSec } = { ...get(), ...patch };
-    commit(set, { nodes, edges, offeredLoad, users, thinkTimeSec });
+    const merged = { ...get(), ...patch };
+    const { nodes, edges, users, thinkTimeSec } = merged;
+    const offeredLoad = Math.round(equilibriumRps({ nodes, edges }, users, thinkTimeSec));
+    const active = new Set(fanoutNudges({ nodes, edges }).map((nd) => nd.targetId));
+    const dismissedNudges = merged.dismissedNudges.filter((id) => active.has(id));
+    commit(set, { nodes, edges, offeredLoad, users, thinkTimeSec, dismissedNudges });
   };
   // Structural edits (nodes/edges/scaling) mean the canvas no longer equals a preset,
   // so they deselect the Examples dropdown. Load-slider + drag keep the selection.
@@ -196,7 +226,7 @@ export const useArena = create<ArenaStore>((set, get) => {
         replicas: 1,
         x: pos.x,
         y: pos.y,
-        ...(kind === "cache" ? { hitRatio: DEFAULT_HIT_RATIO } : {}),
+        ...(isCacheLike(kind) ? { hitRatio: defaultHitRatioFor(kind) } : {}),
       };
       saveStruct({ nodes: [...get().nodes, node] });
       return id;
@@ -243,21 +273,16 @@ export const useArena = create<ArenaStore>((set, get) => {
         ),
       }),
 
-    // Kept for compat: setting raw rps back-computes users at the current think time.
+    // Compat shim (110): a raw rps is a DEMAND — back-solve the population; the
+    // effective rate is still the derived equilibrium.
     setOfferedLoad: (offeredLoad) => {
       const rps = Math.max(0, Math.round(offeredLoad));
-      save({ offeredLoad: rps, users: rps * get().thinkTimeSec });
+      save({ users: rps * get().thinkTimeSec });
     },
 
-    setUsers: (users) => {
-      const u = Math.max(0, Math.round(users));
-      save({ users: u, offeredLoad: rpsOf(u, get().thinkTimeSec) });
-    },
+    setUsers: (users) => save({ users: Math.max(0, Math.round(users)) }),
 
-    setThinkTime: (thinkTimeSec) => {
-      const t = Math.max(1, Math.round(thinkTimeSec));
-      save({ thinkTimeSec: t, offeredLoad: rpsOf(get().users, t) });
-    },
+    setThinkTime: (thinkTimeSec) => save({ thinkTimeSec: Math.max(1, Math.round(thinkTimeSec)) }),
 
     setCallsPerRequest: (id, calls) =>
       saveStruct({
@@ -265,6 +290,8 @@ export const useArena = create<ArenaStore>((set, get) => {
           n.id === id ? { ...n, callsPerRequest: Math.max(1, Math.round(calls)) } : n,
         ),
       }),
+
+    dismissNudge: (id) => save({ dismissedNudges: [...get().dismissedNudges, id] }),
 
     setRegion: (id, region) => {
       if (region !== null && !(ARENA_REGIONS as readonly string[]).includes(region)) return;
@@ -286,21 +313,13 @@ export const useArena = create<ArenaStore>((set, get) => {
         edges: design.edges,
         users: design.users,
         thinkTimeSec: design.thinkTimeSec,
-        offeredLoad: rpsOf(design.users, design.thinkTimeSec),
       }),
 
     loadExample: (id) => {
       const ex = EXAMPLES.find((e) => e.id === id);
       if (!ex) return;
       const d = ex.build();
-      const { nodes, edges, users, thinkTimeSec } = d;
-      commit(set, {
-        nodes,
-        edges,
-        users,
-        thinkTimeSec,
-        offeredLoad: rpsOf(users, thinkTimeSec),
-      });
+      save({ nodes: d.nodes, edges: d.edges, users: d.users, thinkTimeSec: d.thinkTimeSec });
       set({ exampleId: id });
     },
 

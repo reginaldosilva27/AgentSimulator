@@ -70,6 +70,59 @@ describe("per-kind scaling vocabulary (104)", () => {
     expect(screen.queryByText(/routing/i)).toBeNull();
   });
 
+  it("shows the held in-flight figure with its explainer (113 AC3)", () => {
+    render(<ScalePanel id="be-1" />);
+    const row = screen.getByTitle(UI.en.arena.inflightInfo);
+    expect(row.textContent).toMatch(/\d/); // healthy path → a real number
+  });
+
+  it("shows — for in-flight when the awaited path is saturated (113 AC2)", () => {
+    // 1000 rps straight into a single medium deployment (cap 50) — it sheds.
+    useArena.setState({
+      nodes: [
+        { id: "client-1", kind: "client", size: "medium", replicas: 1, x: 0, y: 0 },
+        { id: "llm-1", kind: "llm", size: "medium", replicas: 1, x: 100, y: 0 },
+      ],
+      edges: [{ id: "client-1-llm-1", source: "client-1", target: "llm-1" }],
+      offeredLoad: 1000,
+    });
+    render(<ScalePanel id="llm-1" />);
+    const row = screen.getByTitle(UI.en.arena.inflightInfo);
+    expect(row.textContent).toContain("—");
+  });
+
+  it("shows the quota-limited note on an over-quota regional pool (114 AC4)", () => {
+    // Two large ×20 pools (raw 4,000 rps) stacked in us-east — over the 3,000 quota.
+    useArena.setState({
+      nodes: [
+        { id: "gw", kind: "aiGateway", size: "medium", replicas: 1, x: 0, y: 0 },
+        { id: "llm-a", kind: "llm", size: "large", replicas: 20, region: "us-east", x: 100, y: 0 },
+        { id: "llm-b", kind: "llm", size: "large", replicas: 20, region: "us-east", x: 100, y: 100 },
+      ],
+      edges: [
+        { id: "gw-llm-a", source: "gw", target: "llm-a" },
+        { id: "gw-llm-b", source: "gw", target: "llm-b" },
+      ],
+    });
+    render(<ScalePanel id="llm-a" />);
+    expect(screen.getByText(UI.en.arena.quotaLimited("us-east"))).toBeTruthy();
+  });
+
+  it("shows no quota note on a pool under its regional quota (114 AC4)", () => {
+    render(<ScalePanel id="llm-2" />); // medium ×20 = 1,000 ≤ the 3,000 quota
+    expect(screen.queryByTitle(UI.en.arena.quotaHint)).toBeNull();
+  });
+
+  it("hints the escape hatch when the units slider sits at its ceiling (115 AC4)", () => {
+    render(<ScalePanel id="llm-2" />); // ×20 — the slider max
+    expect(screen.getByText(UI.en.arena.replicasCeilingHint)).toBeTruthy();
+  });
+
+  it("shows no ceiling hint below the max (115 AC4)", () => {
+    render(<ScalePanel id="llm-1" />); // ×1
+    expect(screen.queryByText(UI.en.arena.replicasCeilingHint)).toBeNull();
+  });
+
   it("offers the region select on infrastructure nodes and updates it (106 AC2)", () => {
     render(<ScalePanel id="llm-1" />);
     const select = screen.getByRole("combobox", { name: UI.en.arena.region });

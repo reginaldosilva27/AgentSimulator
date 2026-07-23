@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { EXAMPLES } from "./examples";
+import { equilibriumRps, rpsOf } from "./model";
 import { ARENA_STORAGE_KEY, loadArena, useArena } from "./store";
 
 beforeEach(() => {
@@ -67,9 +68,12 @@ describe("arena store — composition + persistence (AC9)", () => {
     expect(dbNode.size).toBe("large");
 
     // Persisted blob rehydrates to the same design.
+    // 110 — offeredLoad is DERIVED (closed-loop equilibrium); setOfferedLoad is a
+    // demand shim (back-solves users), so the stored rate is the equilibrium.
     const restored = loadArena();
     expect(localStorage.getItem(ARENA_STORAGE_KEY)).toBeTruthy();
-    expect(restored.offeredLoad).toBe(5000);
+    expect(useArena.getState().users).toBe(5000 * 30); // demand back-solved
+    expect(restored.offeredLoad).toBe(useArena.getState().offeredLoad);
     expect(restored.nodes).toHaveLength(2);
     expect(restored.edges).toHaveLength(1);
     expect(restored.nodes.find((n) => n.id === db)?.replicas).toBe(3);
@@ -98,7 +102,16 @@ describe("arena store — composition + persistence (AC9)", () => {
     const live = useArena.getState();
     expect(live.nodes).toHaveLength(preset.nodes.length);
     expect(live.users).toBe(preset.users);
-    expect(live.offeredLoad).toBe(Math.round(preset.users / preset.thinkTimeSec));
+    // 110 — the effective rate is the closed-loop equilibrium of THIS design.
+    expect(live.offeredLoad).toBe(
+      Math.round(
+        equilibriumRps(
+          { nodes: preset.nodes, edges: preset.edges },
+          preset.users,
+          preset.thinkTimeSec,
+        ),
+      ),
+    );
     // survives a reload
     const restored = loadArena();
     expect(restored.nodes).toHaveLength(preset.nodes.length);
@@ -179,6 +192,44 @@ describe("arena store — composition + persistence (AC9)", () => {
 
     useArena.getState().moveNode(id, { x: 90, y: 90 }); // drop commits
     expect(loadArena().nodes[0]).toMatchObject({ x: 90, y: 90 });
+  });
+
+  it("derives offeredLoad from the design too — scaling the bottleneck raises the rate (110 AC7)", () => {
+    useArena.getState().loadExample("scale-llm"); // 6k users / 20s → demand 300
+    const before = useArena.getState().offeredLoad;
+    expect(before).toBeLessThan(rpsOf(6_000, 20)); // model latency throttles the closed loop
+
+    const llm = useArena.getState().nodes.find((n) => n.kind === "llm")!;
+    useArena.getState().setSize(llm.id, "xlarge"); // faster model → higher equilibrium
+    const after = useArena.getState().offeredLoad;
+    expect(after).toBeGreaterThan(before);
+
+    // Hydration recomputes the same equilibrium from users/think/design (110 AC7).
+    expect(loadArena().offeredLoad).toBe(after);
+  });
+
+  it("dismissing a fan-out nudge persists; removing the edge clears it (115 AC1)", () => {
+    const be = useArena.getState().addNode("backend", { x: 0, y: 0 });
+    useArena.getState().select(null);
+    const llm = useArena.getState().addNode("llm", { x: 200, y: 0 });
+    useArena.getState().connect(be, llm);
+
+    useArena.getState().dismissNudge(llm);
+    expect(useArena.getState().dismissedNudges).toContain(llm);
+    expect(loadArena().dismissedNudges).toContain(llm); // persisted
+
+    // Removing the wiring removes the nudge — the dismissal is pruned so a
+    // future re-wire nudges again.
+    useArena.getState().removeEdge(`${be}-${llm}`);
+    expect(useArena.getState().dismissedNudges).toEqual([]);
+  });
+
+  it("hydrates pre-115 blobs without dismissedNudges to [] (115)", () => {
+    localStorage.setItem(
+      ARENA_STORAGE_KEY,
+      JSON.stringify({ nodes: [], edges: [], offeredLoad: 500 }),
+    );
+    expect(loadArena().dismissedNudges).toEqual([]);
   });
 
   it("generates unique node ids and removing a node drops its edges", () => {

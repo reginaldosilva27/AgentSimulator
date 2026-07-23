@@ -29,6 +29,7 @@ export type ArenaKind =
   | "aiGateway"
   | "loadBalancer"
   | "cache"
+  | "semanticCache"
   | "queue"
   | "readReplica";
 
@@ -66,12 +67,30 @@ export const BENCHMARKS: Record<ArenaKind, Benchmark> = {
   mcp: { baseCapacity: 1_000, baseLatencyMs: 50 },
   appDb: { baseCapacity: 3_000, baseLatencyMs: 10 },
   cache: { baseCapacity: 50_000, baseLatencyMs: 2 },
+  // 112 — an embedding + vector lookup per request: slower than a key-value hit.
+  semanticCache: { baseCapacity: 20_000, baseLatencyMs: 10 },
   queue: { baseCapacity: 20_000, baseLatencyMs: 5 },
   readReplica: { baseCapacity: 3_000, baseLatencyMs: 10 },
 };
 
 /** Default cache hit-ratio (editable per node); only misses reach the downstream. */
 export const DEFAULT_HIT_RATIO = 0.8;
+
+/** 112 — the semantic cache's honest default: it dedupes paraphrases, not
+ *  sessions — real-world semantic hit rates are modest (~20–30%). Editable. */
+export const DEFAULT_SEMANTIC_HIT_RATIO = 0.25;
+
+/** 112 — kinds that serve a hit fraction locally and forward only the misses. */
+export function isCacheLike(kind: ArenaKind): boolean {
+  return kind === "cache" || kind === "semanticCache";
+}
+
+/** Per-kind default hit ratio for cache-like kinds (0 elsewhere). */
+export function defaultHitRatioFor(kind: ArenaKind): number {
+  if (kind === "cache") return DEFAULT_HIT_RATIO;
+  if (kind === "semanticCache") return DEFAULT_SEMANTIC_HIT_RATIO;
+  return 0;
+}
 
 /** 103 — kinds whose per-request call fan-out is user-configurable (the ReAct loop
  *  makes 2–5 model calls per turn; tools/retrieval can be hit more than once). */
@@ -103,11 +122,33 @@ export type ArenaRegion = (typeof ARENA_REGIONS)[number];
 export const ROUTING_TAX_RATE = 0.02;
 export const ROUTING_TAX_CAP = 0.4;
 
+/** 114 — a region caps how much MODEL capacity you can provision (subscription
+ *  quota / PTU availability): the aggregate effective capacity of all LLM pools
+ *  sharing a region is capped at this many calls/s, squeezing each pool
+ *  proportionally past it. Calibrated to bite exactly on the anti-pattern: every
+ *  preset pool (1,000–2,000 rps/region) fits; "60 large deployments in one
+ *  region" (6,000 rps) does not — spreading regions is the honest escape.
+ *  Teaching constant (real quotas vary by model/region), stated in the hint. */
+export const REGIONAL_LLM_QUOTA_RPS = 3_000;
+
+/** 114 — fixed latency added to a hop whose endpoints declare DIFFERENT regions
+ *  (mid-range of real inter-region RTTs; one constant, not a distance matrix). */
+export const CROSS_REGION_LATENCY_MS = 100;
+
 /** 103 — teaching cost basis for the LLM $/hour readout: an agent-shaped call
  *  (~2k input + 500 output tokens) at gpt-4.1-mini global prices ($0.40/M input,
  *  $1.60/M output) ≈ 2000×0.4/1M + 500×1.6/1M = $0.0016 per call. Stated in the
  *  UI hint — an order-of-magnitude estimate, not a quote. */
 export const LLM_COST_PER_CALL_USD = 0.0016;
+
+/** 111 — teaching cost basis for PROVISIONED model capacity (think Azure PTUs /
+ *  Bedrock provisioned throughput): ~$100/h per MEDIUM deployment, scaled by
+ *  SIZE_MULTIPLIER, billed even when idle. Calibrated against the usage side so
+ *  the real trade-off shows: a medium deployment at full tilt would bill
+ *  50 rps × $0.0016 × 3600 ≈ $288/h pay-per-call, so provisioned breaks even
+ *  around ~35% utilization — busy fleets buy capacity, idle ones pay per call.
+ *  Order-of-magnitude estimate, stated in the UI hint. */
+export const LLM_COST_PER_DEPLOYMENT_HOUR_USD = 100;
 
 /** Routers (load balancer, AI gateway) split traffic evenly across their children;
  *  every other kind fans out the full load to each child. */
@@ -161,8 +202,8 @@ export const KIND_META: Record<ArenaKind, KindMeta> = {
     },
     clouds: { azure: "Azure OpenAI", aws: "Bedrock", gcp: "Vertex AI" },
     info: {
-      en: "NOT containers: one unit is a model DEPLOYMENT with its own rate-limit quota (TPM/RPM — e.g. an Azure PTU block or a per-region deployment). Size is the quota tier of each deployment. Draw SEPARATE LLM boxes for different pools (regions/models/providers); the deployments slider is identical copies within one pool. With no AI Gateway in front, YOUR backend routes across the endpoints and pays a capacity tax for it.",
-      pt: "NÃO são containers: uma unidade é um DEPLOYMENT do modelo com cota própria de rate limit (TPM/RPM — ex.: um bloco de PTUs na Azure ou um deployment por região). O tamanho é o tier de cota de cada deployment. Desenhe caixas de LLM SEPARADAS para pools diferentes (regiões/modelos/provedores); o slider de deployments são cópias idênticas dentro de um pool. Sem um AI Gateway na frente, é o SEU backend que roteia entre os endpoints e paga um imposto de capacidade por isso.",
+      en: "NOT containers: one unit is a model DEPLOYMENT with its own rate-limit quota (TPM/RPM — e.g. an Azure PTU block or a per-region deployment). Size is the quota tier of each deployment. Draw SEPARATE LLM boxes for different pools (regions/models/providers); the deployments slider is identical copies within one pool. With no AI Gateway in front, YOUR backend routes across the endpoints and pays a capacity tax for it. Each region caps total LLM capacity (regional quota) — spreading pools across regions is how real fleets escape it.",
+      pt: "NÃO são containers: uma unidade é um DEPLOYMENT do modelo com cota própria de rate limit (TPM/RPM — ex.: um bloco de PTUs na Azure ou um deployment por região). O tamanho é o tier de cota de cada deployment. Desenhe caixas de LLM SEPARADAS para pools diferentes (regiões/modelos/provedores); o slider de deployments são cópias idênticas dentro de um pool. Sem um AI Gateway na frente, é o SEU backend que roteia entre os endpoints e paga um imposto de capacidade por isso. Cada região limita a capacidade total de LLM (cota regional) — espalhar pools entre regiões é como frotas reais escapam disso.",
     },
     scaling: {
       unit: { en: "Deployments", pt: "Deployments" },
@@ -282,6 +323,26 @@ export const KIND_META: Record<ArenaKind, KindMeta> = {
       sizeMeaning: { en: "Node type (memory)", pt: "Tipo do nó (memória)" },
     },
   },
+  semanticCache: {
+    label: { en: "Semantic Cache", pt: "Cache Semântico" },
+    description: {
+      en: "Answers repeated/similar questions without calling the model",
+      pt: "Responde perguntas repetidas/parecidas sem chamar o modelo",
+    },
+    clouds: {
+      azure: "Azure Managed Redis (vector)",
+      aws: "MemoryDB (vector search)",
+      gcp: "Memorystore for Redis",
+    },
+    info: {
+      en: "Caches answers by embedding similarity: hits skip the model entirely; only misses continue. Honest hit rates are modest (~20–30% — it dedupes paraphrases, not sessions) and a too-loose threshold can serve a WRONG similar answer. Units are cluster nodes; size is node memory.",
+      pt: "Faz cache de respostas por similaridade de embeddings: acertos pulam o modelo; só as falhas seguem adiante. Taxas de acerto honestas são modestas (~20–30% — ele deduplica paráfrases, não sessões) e um limiar frouxo demais pode servir uma resposta parecida ERRADA. As unidades são nós do cluster; o tamanho é a memória do nó.",
+    },
+    scaling: {
+      unit: { en: "Cluster nodes", pt: "Nós do cluster" },
+      sizeMeaning: { en: "Node type (memory)", pt: "Tipo do nó (memória)" },
+    },
+  },
   queue: {
     label: { en: "Queue", pt: "Fila" },
     // 103 honesty: in this steady-state model a queue passes load through — it
@@ -328,6 +389,7 @@ export const PALETTE_ORDER: readonly ArenaKind[] = [
   "aiGateway",
   "loadBalancer",
   "cache",
+  "semanticCache",
   "queue",
   "readReplica",
 ];

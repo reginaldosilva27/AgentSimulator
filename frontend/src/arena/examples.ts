@@ -17,13 +17,17 @@
 
 import type { Lang } from "../i18n";
 import { DEFAULT_HIT_RATIO } from "./components";
-import { rpsOf, type ArenaEdge } from "./model";
+import { equilibriumRps, type ArenaEdge } from "./model";
 import type { ArenaNode, ArenaState } from "./store";
 
 export interface ArenaExample {
   id: string;
   title: Record<Lang, string>;
   description: Record<Lang, string>;
+  /** 115 — the description's load story as TESTABLE data: the demanded rate the
+   *  copy cites and the LLM tier's open-loop status at that demand. A test walks
+   *  every preset and asserts these against the model, so copy can't go stale. */
+  claims: { demandRps: number; llm: "healthy" | "warning" | "critical" };
   build: () => Pick<ArenaState, "nodes" | "edges" | "users" | "thinkTimeSec">;
 }
 
@@ -49,6 +53,7 @@ const ROW = 150; // vertical spacing between branches
 export const EXAMPLES: ArenaExample[] = [
   {
     id: "simple-rag",
+    claims: { demandRps: 300, llm: "critical" },
     title: { en: "Simple RAG agent", pt: "Agente RAG simples" },
     description: {
       en: "6k users, 1 msg/20s (≈300 req/s). Each turn makes 2 LLM calls — one deployment saturates instantly: the agent's wall.",
@@ -68,6 +73,7 @@ export const EXAMPLES: ArenaExample[] = [
   },
   {
     id: "scale-llm",
+    claims: { demandRps: 300, llm: "healthy" },
     title: { en: "Scale the LLM", pt: "Escalar o LLM" },
     description: {
       en: "Same 300 req/s, but the LLM runs 20 deployments (replicas) — the bottleneck clears. Horizontal scale is the lever.",
@@ -87,6 +93,7 @@ export const EXAMPLES: ArenaExample[] = [
   },
   {
     id: "rag-cache",
+    claims: { demandRps: 200, llm: "healthy" },
     title: { en: "RAG with a cache", pt: "RAG com cache" },
     description: {
       en: "An API gateway fronts the POST path (a CDN would bypass it) and a cache serves repeat retrievals — only misses reach the vector DB.",
@@ -114,6 +121,7 @@ export const EXAMPLES: ArenaExample[] = [
   },
   {
     id: "agent-tools",
+    claims: { demandRps: 100, llm: "healthy" },
     title: { en: "Agent with tools", pt: "Agente com tools" },
     description: {
       en: "The ReAct loop multiplies internal traffic: 100 user req/s become 300 LLM calls and 200 tool calls per second.",
@@ -138,7 +146,35 @@ export const EXAMPLES: ArenaExample[] = [
     }),
   },
   {
+    id: "semantic-cache",
+    claims: { demandRps: 380, llm: "healthy" },
+    title: { en: "Semantic cache shields the fleet", pt: "Cache semântico protege a frota" },
+    description: {
+      en: "7.6k users (≈380 req/s), 2 LLM calls/turn. A semantic cache answering ~30% of repeated questions is what keeps 16 deployments healthy — remove it and the same fleet saturates.",
+      pt: "7,6 mil usuários (≈380 req/s), 2 chamadas de LLM por turno. Um cache semântico respondendo ~30% das perguntas repetidas é o que mantém 16 deployments saudáveis — sem ele, a mesma frota satura.",
+    },
+    build: () => ({
+      users: 7_600,
+      thinkTimeSec: 20,
+      nodes: [
+        node("client", "client", 0, ROW),
+        node("backend", "backend", COL, ROW),
+        // The third lever (112): hits skip the model entirely; only misses go on.
+        node("semcache", "semanticCache", COL * 2, 0, { hitRatio: 0.3 }),
+        node("llm", "llm", COL * 3, 0, { callsPerRequest: 2, replicas: 16 }),
+        node("vectorDb", "vectorDb", COL * 2, ROW * 2),
+      ],
+      edges: [
+        edge("client", "backend"),
+        edge("backend", "semcache"),
+        edge("semcache", "llm"),
+        edge("backend", "vectorDb"),
+      ],
+    }),
+  },
+  {
     id: "prod",
+    claims: { demandRps: 600, llm: "healthy" },
     title: { en: "Production shape", pt: "Formato de produção" },
     description: {
       en: "12k users (≈600 req/s) through gateway + LB, replicated backend, an AI Gateway routing 2 LLM pools, cache + vector DB.",
@@ -174,6 +210,7 @@ export const EXAMPLES: ArenaExample[] = [
   },
   {
     id: "llm-fleet",
+    claims: { demandRps: 1667, llm: "healthy" },
     title: { en: "100k users", pt: "100 mil usuários" },
     description: {
       en: "100k concurrent users at 1 msg/min ≈ 1,667 req/s (Little's Law). An AI Gateway spreads ~3,300 LLM calls/s across a fleet of 4 pools × 6 XLarge deployments.",
@@ -214,5 +251,12 @@ export const DEFAULT_EXAMPLE_ID = "simple-rag";
 export function defaultDesign(): ArenaState {
   const ex = EXAMPLES.find((e) => e.id === DEFAULT_EXAMPLE_ID) ?? EXAMPLES[0];
   const d = ex.build();
-  return { ...d, offeredLoad: rpsOf(d.users, d.thinkTimeSec) };
+  // 110 — the effective rate is the closed-loop equilibrium, not the raw demand.
+  return {
+    ...d,
+    offeredLoad: Math.round(
+      equilibriumRps({ nodes: d.nodes, edges: d.edges }, d.users, d.thinkTimeSec),
+    ),
+    dismissedNudges: [],
+  };
 }

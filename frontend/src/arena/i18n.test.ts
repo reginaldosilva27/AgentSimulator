@@ -36,6 +36,24 @@ describe("arena chrome i18n (AC11)", () => {
     }
   });
 
+  it("has the saturation-notice builder in both languages (108 AC5)", () => {
+    expect(en.saturatedHeader("115")).toContain("115");
+    expect(pt.saturatedHeader("115")).toContain("115");
+    expect(en.saturatedHeader("115")).toMatch(/429/);
+    expect(pt.saturatedHeader("115")).toMatch(/429/);
+    expect(en.saturatedHint.trim()).toBeTruthy();
+    expect(pt.saturatedHint.trim()).toBeTruthy();
+  });
+
+  it("teaches think-time ranges and the fan-out nudge in both languages (115 AC3/AC6)", () => {
+    expect(en.thinkTimeHint).toMatch(/30–120|30-120/);
+    expect(pt.thinkTimeHint).toMatch(/30–120|30-120/);
+    expect(en.fanoutNudge.trim()).toBeTruthy();
+    expect(pt.fanoutNudge.trim()).toBeTruthy();
+    expect(en.replicasCeilingHint.trim()).toBeTruthy();
+    expect(pt.replicasCeilingHint.trim()).toBeTruthy();
+  });
+
   it("has the load readout + shedding builders in both languages (103)", () => {
     expect(en.usersReadout("100,000", "1,667")).toContain("100,000");
     expect(pt.usersReadout("100.000", "1.667")).toContain("100.000");

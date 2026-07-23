@@ -44,6 +44,16 @@ vi.mock("../lib/onboarding", async (importOriginal) => ({
 
 import App from "../App";
 import { UI } from "../i18n/strings";
+import { useArena, type ArenaNode } from "./store";
+
+const anode = (id: string, kind: ArenaNode["kind"], x = 0, y = 0): ArenaNode => ({
+  id,
+  kind,
+  size: "medium",
+  replicas: 1,
+  x,
+  y,
+});
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -94,6 +104,78 @@ describe("Arena honesty banner (AC10)", () => {
     fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
     // The banner text states it's a model, not a live load test.
     expect(screen.getByText(UI.en.arena.honesty)).toBeTruthy();
+  });
+});
+
+describe("saturation honesty in the control bar (108 AC1/AC2/AC4)", () => {
+  it("replaces the latency readout with the shed notice on the first-visit sample (saturated)", () => {
+    // The default sample (simple-rag) saturates the LLM — the header must tell
+    // the shed story, never the 0.99-clamped fictional latency (e.g. "80s").
+    useArena.getState().loadExample("simple-rag");
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
+
+    expect(screen.getByText(/Saturated — shedding/)).toBeTruthy();
+    // The latency readout (identified by its hint tooltip) is not rendered.
+    expect(screen.queryByTitle(UI.en.arena.e2eLatencyHint)).toBeNull();
+  });
+
+  it("shows the latency readout (and no notice) for a healthy design", () => {
+    useArena.getState().loadDesign({
+      nodes: [anode("client", "client"), anode("be", "backend", 200)],
+      edges: [{ id: "client-be", source: "client", target: "be" }],
+      users: 3_000,
+      thinkTimeSec: 30, // 100 req/s → backend at 2% — healthy
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
+
+    expect(screen.queryByText(/Saturated — shedding/)).toBeNull();
+    expect(screen.queryByTitle(UI.en.arena.e2eLatencyHint)).not.toBeNull();
+  });
+});
+
+describe("closed-loop dual readout (110 AC4)", () => {
+  it("shows demanded → effective when the closed loop throttles by more than 5%", () => {
+    // scale-llm: demand 300 req/s, but ~4s of model latency per turn self-throttles
+    // the closed population well below that.
+    useArena.getState().loadExample("scale-llm");
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
+
+    expect(screen.getByText(/req\/s effective/)).toBeTruthy();
+  });
+
+  it("collapses to a single figure when demand ≈ effective", () => {
+    useArena.getState().loadDesign({
+      nodes: [anode("client", "client"), anode("be", "backend", 200)],
+      edges: [{ id: "client-be", source: "client", target: "be" }],
+      users: 3_000,
+      thinkTimeSec: 30, // 100 req/s over a 20ms backend — gap ≈ 0
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
+
+    expect(screen.queryByText(/req\/s effective/)).toBeNull();
+  });
+});
+
+describe("provisioned + usage LLM cost (111 AC3)", () => {
+  it("shows both bills when a fleet is provisioned and traffic flows", () => {
+    useArena.getState().loadDesign({
+      nodes: [anode("client", "client"), anode("be", "backend", 200), anode("llm", "llm", 400)],
+      edges: [
+        { id: "client-be", source: "client", target: "be" },
+        { id: "be-llm", source: "be", target: "llm" },
+      ],
+      users: 400,
+      thinkTimeSec: 20, // 20 req/s over one medium deployment (cap 50) — served, billed
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
+
+    expect(screen.getByText(/\/h provisioned/)).toBeTruthy();
+    expect(screen.getByText(/\/h usage/)).toBeTruthy();
   });
 });
 
