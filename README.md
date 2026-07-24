@@ -465,8 +465,10 @@ end-to-end turn latency, and the LLM bill.
   the vector DB or the app DB ever would.
 - **Reason about scale before you build** — try vertical vs horizontal scaling, add a
   cache or an AI gateway, spread a fleet across regions, and watch the numbers move.
-- **Teach & present** — eight ready-made example scenarios and a persistent honesty
-  banner make it a hands-on lab for a talk, a workshop, or onboarding.
+- **Teach & present** — ten ready-made example scenarios, a grouped + searchable
+  component palette, and **"Learn more" deep links** from every component into the
+  matching [Learn mode](#-learn-mode) topic make it a hands-on lab for a talk, a
+  workshop, or onboarding.
 
 ### How to use it
 
@@ -475,12 +477,14 @@ end-to-end turn latency, and the LLM bill.
 2. **Set the load** — drag the **users** slider and pick a **think time**; the bar
    converts to req/s via **Little's Law** (`users ÷ think time`) and shows the
    conversion — *100k users* and *100k req/s* are orders of magnitude apart.
-3. **Compose the architecture** — drag kinds from the palette, wire boxes by dragging
-   between handles (they snap; a new box auto-wires to the selected one), and delete an
-   edge with **Backspace**. Hit **auto-arrange** to reflow the graph by depth.
+3. **Compose the architecture** — drag kinds from the **grouped, searchable palette**,
+   wire boxes by dragging between their handles (they snap), and delete an edge with
+   **Backspace**. Hit **auto-arrange** to reflow the graph by depth.
 4. **Scale & tune** — pick each box's **instance size** (vertical) and **replica count**
-   (horizontal); set the **calls-per-request** fan-out on the LLM/tools; tune the
-   **workload payload** (tokens in/out) that drives capacity, latency and cost.
+   (horizontal); on an LLM node also pick a **model tier** (nano · mini · standard ·
+   large, each a real OpenAI SKU — trades latency × cost); set the **calls-per-request**
+   fan-out on the LLM/tools; tune the **workload payload** (tokens in/out) that drives
+   capacity, latency and cost.
 5. **Read the result** — each box shows **QPS · utilization · latency · status**; the
    **bottleneck** is highlighted, an over-capacity box reports an honest **429 shed
    rate**, and the header shows **end-to-end turn latency** and the **LLM bill**.
@@ -497,11 +501,16 @@ end-to-end turn latency, and the LLM bill.
 | **Two LLM bills** | **Provisioned** (reserved capacity, billed even idle) + **usage** (served calls only — 429s aren't billed). |
 | **The connection wall** | Streams held in flight (throughput × time-in-system) vs a per-node connection budget — the limit that actually fells real agent backends first. |
 | **Caches** | A key-value cache (data path) or a **semantic cache** (model path) forwards only its miss fraction downstream. |
+| **Async work** | Work behind a **queue → worker** leaves the user-facing turn (the caller doesn't wait); an overloaded consumer grows a **backlog**, not a 429 shed. |
+| **Model tier** | Picking a model (nano → large, real OpenAI SKUs) moves per-call **latency and cost** — orthogonal to the quota/capacity you provision with instance size. |
 
-The palette spans the **agentic stations** (client · backend · LLM · Vector DB · MCP ·
-App DB) plus the **classic scaling primitives** (CDN · API gateway · AI gateway · load
-balancer · cache · semantic cache · queue · read replica). Designs, annotations and the
-current load all persist locally, and the whole page is **bilingual EN / PT**.
+The palette is **grouped by type and searchable**, spanning the **agentic core**
+(client · backend · Agent Harness · LLM · AI gateway · guardrails · MCP), the **data**
+tier (Vector DB · App DB · read replica · memory store · object store), **traffic &
+edge** (CDN · API gateway · load balancer), **scale & queues** (cache · semantic cache ·
+queue · worker) and an **external** dependency (3rd-party API). Every mapped component
+also links to its **Learn** theory topic. Designs, annotations and the current load all
+persist locally, and the whole page is **bilingual EN / PT**.
 
 ---
 

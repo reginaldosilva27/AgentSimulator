@@ -51,8 +51,8 @@ shipped. Each item here is therefore the *seed of its own spec*.
 | Rung ↓ / Track → | RAG Quality | Agent Design | AI-Ops | Security & Trust | Scale & Infra |
 |---|---|---|---|---|---|
 | **Simple** | embedding + vector RAG ✅ | ReAct agent ✅ | — | auth stub 🔧 | single-instance ✅ |
-| **Intermediate** | chunking 🟡 · metadata 🟡 · rerank ✅ · hybrid ✅ · MMR 🟡 · self-query 🟡 · compression 🟡 · multi-vector 🟡 · query expansion 🟡 · metrics 🟡 | DeepAgents ✅ · summarization 🟡 · honest token/cost ✅ | — | — | — |
-| **Advanced** | RAGAS (full) → Eval | multi-agent: researcher/coder/critic 🏷️ | gateway 🟡 · cache 🟡 · eval/RAGAS 🟡 · observability 🟡 · model router 🔧 · multi-provider 🔧 | guardrails 🟡 · secrets/DLP 🔧 · supply chain 🔧 · sandbox 🔧 · identity 🔧 · jailbreak 🔧 · auth/rate-limit 🔧 | multi-replica 🔧 |
+| **Intermediate** | chunking ✅ · metadata ✅ · rerank ✅ · hybrid ✅ · MMR 🟡 · self-query 🟡 · compression 🟡 · multi-vector 🟡 · query expansion 🟡 · metrics ✅ | DeepAgents ✅ · summarization 🟡 · honest token/cost ✅ | — | — | — |
+| **Advanced** | RAGAS (full) → Eval | multi-agent: researcher/coder/critic 🏷️ | gateway 🟡 · cache 🟡 · eval/RAGAS 🟡 · observability 🟡 · model router 🔧 · multi-provider ✅ | guardrails 🟡 · secrets/DLP 🔧 · supply chain 🔧 · sandbox 🔧 · identity 🔧 · jailbreak 🔧 · auth/rate-limit 🔧 | multi-replica 🔧 |
 
 The sections below are grouped by rung; within the Advanced rung each `###` is annotated with its
 **Track** so the matrix and the prose stay in sync.
@@ -200,44 +200,34 @@ the `rag` station (library-level, e.g. LangChain), not a new tier.
   fan-out) before embedding, then fuse the result sets. A spec adds a `rag.expand` sub-stage listing
   the generated query variants and the fusion (overlaps with hybrid search's RRF fusion).
 
-### 🟡 Chunking strategies (ingestion-time)
+### ✅ Chunking strategies (ingestion-time) — SHIPPED (072-chunking-strategies)
 
-- **Where it shows up.** The `RagDetail` drill-in already opens on **Chunking → Embedding →
-  Retrieval → Reranking**, but chunking today is a single fixed strategy in
-  `backend/app/rag/ingest.py`.
 - **What it is.** The course's M2U3.3 chunking ladder: **fixed size + token limits**, **overlap for
   context preservation**, **semantic chunking** (split on meaning, not character count) and
-  **hierarchical chunking** (parent/child). Chunking quality is upstream of every retrieval metric.
-- **What a spec would add.** A `chunk_strategy` config on ingest, the strategy + chunk stats surfaced
-  in the Chunking panel of `RagDetail`, and a way to re-ingest the corpus with a chosen strategy from
-  ⚙️ Settings (reuses the existing reindex path). Hierarchical chunking pairs with multi-vector
-  retrieval above.
+  **recursive/hierarchical chunking**. Chunking quality is upstream of every retrieval metric.
+- **What shipped.** Configurable ingestion chunking (`backend/app/rag/chunking.py` — fixed /
+  recursive / semantic / agentic) with per-strategy knobs (081) and a preview playground; the
+  strategy + chunk stats surface in the Chunking panel of `RagDetail`, and re-ingest from ⚙️ Settings
+  reuses the reindex path. See also 083 (chunk table) and 087 (overlap highlight).
 
-### 🟡 Metadata as a first-class citizen
+### ✅ Metadata as a first-class citizen — SHIPPED (073-metadata-first-class)
 
-- **Where it shows up.** No tile yet; lives inside the `rag` station (index side) and the future
-  **self-querying** retriever above.
 - **What it is.** M2U3.3's metadata story: attach useful metadata to each chunk (source, section,
-  author, date, type), **extract** metadata from unstructured docs at ingest, **filter** on it at
-  retrieval (the target of self-querying), and use it for **evaluation/debugging** (*why did this
-  chunk get retrieved?*).
-- **What a spec would add.** A metadata schema on the Chroma collection, an extraction step in
-  `ingest.py`, a `where=` filter path in `retriever.py`, and metadata shown on each retrieved chunk
-  in the Vector DB inspector + `RagDetail`. This is the foundation the **self-querying** item builds
-  on.
+  author, date, type), **extract** metadata at ingest, **filter** on it at retrieval (the seam
+  self-querying builds on), and use it for **evaluation/debugging** (*why did this chunk get
+  retrieved?*).
+- **What shipped.** Rich chunk metadata at ingest, a `where=`/`filters=` filter path in
+  `retriever.py`, and "why retrieved" chips on each retrieved chunk in the Vector DB inspector +
+  `RagDetail`. The self-query retriever (still 🟡 above) reuses this filter seam.
 
-### 🟡 Retrieval-quality metrics (Precision@k · MRR)
+### ✅ Retrieval-quality metrics (Precision@k · MRR) — SHIPPED (071-retrieval-metrics)
 
-- **Where it shows up.** Adjacent to the Advanced-rung **Eval Runner** (RAGAS / LLM-as-judge) below —
-  but these are the *retrieval-specific* metrics that belong on the Intermediate rung, next to the
-  reranker they measure.
-- **What it is.** M2U3.1 §4's retrieval-quality measures: **Precision@k** and **MRR** (was the
+- **What it is.** M2U3.1 §4's retrieval-quality measures: **Precision@k · Recall@k · MRR** (was the
   relevant chunk in the top-k, and how high?), the LLM-as-judge vs. manual-ground-truth trade-off,
   and where **RAGAS** fits. These quantify whether reranking / hybrid / MMR actually helped.
-- **What a spec would add.** A small labelled query → relevant-doc set under `backend/app/data/`, a
-  metrics computation after retrieval, and a readout in `RagDetail` showing Precision@k / MRR for the
-  current run (so the *why rerank?* claim is measured, not asserted). The full **RAGAS**
-  answer-quality suite stays in the Advanced **Eval Runner**.
+- **What shipped.** A labelled golden set + a metrics computation over `rag.retrieve`, with a readout
+  showing Precision@k / Recall@k / MRR for the current run (so the *why rerank?* claim is measured,
+  not asserted). The full **RAGAS** answer-quality suite stays in the Advanced **Eval Runner** (🟡).
 
 ---
 
@@ -337,23 +327,15 @@ yet); the matrix above is the authoritative grouping.
 These don't have a tile of their own — they're seams the code already keeps open. Each is a
 genuine TODO for production-readiness.
 
-### 🔧 Multi-provider LLM support — *track: `aiops`*
-- **Where the seam is.** `backend/app/llm/provider.py` — the `LLMProvider` ABC is **explicitly
-  kept as a thin seam**. Today `get_provider()` always returns `OpenAIProvider`, and with no
-  `OPENAI_API_KEY` it raises `MissingAPIKeyError`. Same story for embeddings in
-  `backend/app/rag/embeddings.py`.
-- **What's missing.**
-  - A second concrete provider (e.g. `AnthropicProvider`, `AzureOpenAIProvider`, an Ollama-backed
-    local provider for offline dev) implementing `decide`, `stream_answer` and surfacing real
-    `TokenUsage`.
-  - Config-driven selection (env: `LLM_PROVIDER=openai|anthropic|...`) instead of hard-coded
-    OpenAI in `get_provider()`.
-  - The same for embeddings (the `EMBEDDING_PROVIDER` seam).
-- **Why this is the right shape.** Once **multi-provider** lands, the **LLM Gateway** above
-  becomes the natural orchestrator (routing between providers, fallback when one degrades).
-- **Constitution check.** §2 currently mandates *single provider (OpenAI) required* — adding
-  multi-provider is an **amendment** (constitution §A) before code. Open a spec under
-  `specs/` that proposes the amendment and the implementation together.
+### ✅ Multi-provider LLM support — SHIPPED (074-ollama-provider · 075-ollama-embeddings)
+- **What it is.** The `LLMProvider` ABC (`backend/app/llm/provider.py`) is a thin seam; a second
+  concrete provider implements `decide`/`stream_answer` and surfaces real `TokenUsage`.
+- **What shipped.** **Ollama** is a real per-agent provider (`OllamaProvider`, `agents.provider`
+  column, `app_config` URL) — an agent can run entirely on a local model, no OpenAI key needed.
+  Embeddings can also run on local Ollama (075), with an instance-global provider/model and
+  auto-rebuild via the embedding signature. This **amended constitution §2** (no longer
+  single-provider). The **LLM Gateway** (🟡 above) is the natural next orchestrator (routing +
+  fallback between providers).
 
 ### 🔧 Model router (per-request model selection) — *track: `aiops`*
 - **Where the seam would live.** Either inside the future **LLM Gateway** tile, or as a router
@@ -384,8 +366,8 @@ genuine TODO for production-readiness.
   pool in front of the relational DB.
 - **What a spec would add.** A pluggable `TraceStore` (Redis impl), a `Checkpointer` swap for
   LangGraph, and a load-test demonstrating two replicas serving the same conversation.
-- **Constitution check.** §7 currently mandates *single-instance* — same story as multi-provider:
-  amend the constitution as part of the spec.
+- **Constitution check.** §7 currently mandates *single-instance* — just as multi-provider
+  amended §2 (074), amend the constitution as part of the spec.
 
 ### 🔧 Security & trust — the *cybersecurity* seams
 
@@ -586,8 +568,8 @@ própria spec*.
 | Degrau ↓ / Track → | RAG Quality | Agent Design | AI-Ops | Security & Trust | Scale & Infra |
 |---|---|---|---|---|---|
 | **Simples** | embedding + RAG vetorial ✅ | agente ReAct ✅ | — | stub de auth 🔧 | instância única ✅ |
-| **Intermediário** | chunking 🟡 · metadados 🟡 · rerank ✅ · híbrida ✅ · MMR 🟡 · self-query 🟡 · compressão 🟡 · multi-vector 🟡 · expansão de query 🟡 · métricas 🟡 | DeepAgents ✅ · summarization 🟡 · custo/token honesto ✅ | — | — | — |
-| **Avançado** | RAGAS (completo) → Eval | multi-agente: researcher/coder/critic 🏷️ | gateway 🟡 · cache 🟡 · eval/RAGAS 🟡 · observabilidade 🟡 · model router 🔧 · multi-provider 🔧 | guardrails 🟡 · segredos/DLP 🔧 · cadeia de suprimentos 🔧 · sandbox 🔧 · identidade 🔧 · jailbreak 🔧 · auth/rate-limit 🔧 | multi-réplica 🔧 |
+| **Intermediário** | chunking ✅ · metadados ✅ · rerank ✅ · híbrida ✅ · MMR 🟡 · self-query 🟡 · compressão 🟡 · multi-vector 🟡 · expansão de query 🟡 · métricas ✅ | DeepAgents ✅ · summarization 🟡 · custo/token honesto ✅ | — | — | — |
+| **Avançado** | RAGAS (completo) → Eval | multi-agente: researcher/coder/critic 🏷️ | gateway 🟡 · cache 🟡 · eval/RAGAS 🟡 · observabilidade 🟡 · model router 🔧 · multi-provider ✅ | guardrails 🟡 · segredos/DLP 🔧 · cadeia de suprimentos 🔧 · sandbox 🔧 · identidade 🔧 · jailbreak 🔧 · auth/rate-limit 🔧 | multi-réplica 🔧 |
 
 As seções abaixo estão agrupadas por degrau; dentro do degrau Avançado cada `###` é anotado com o
 seu **Track** para a matriz e a prosa ficarem em sincronia.
@@ -727,44 +709,38 @@ algoritmicamente dentro da estação `rag` (nível de biblioteca, ex.: LangChain
   adiciona uma sub-etapa `rag.expand` listando as variantes de query geradas e a fusão (sobrepõe com
   a fusão RRF da busca híbrida).
 
-### 🟡 Estratégias de chunking (tempo de ingestão)
+### ✅ Estratégias de chunking (tempo de ingestão) — ENTREGUE (072-chunking-strategies)
 
-- **Onde aparece.** O drill-in `RagDetail` já abre em **Chunking → Embedding → Recuperação →
-  Reranking**, mas o chunking hoje é uma única estratégia fixa em `backend/app/rag/ingest.py`.
 - **O que é.** A escada de chunking do M2U3.3 do curso: **tamanho fixo + limites de token**,
-  **overlap para preservação de contexto**, **chunking semântico** (dividir por significado, não por
-  contagem de caracteres) e **chunking hierárquico** (pai/filho). A qualidade do chunking está a
-  montante de toda métrica de recuperação.
-- **O que uma spec adicionaria.** Uma config `chunk_strategy` na ingestão, a estratégia + estatísticas
-  de chunk surfaceadas no painel Chunking do `RagDetail`, e uma forma de re-ingerir o corpus com uma
-  estratégia escolhida a partir do ⚙️ Settings (reusa o caminho de reindex existente). O chunking
-  hierárquico combina com a recuperação multi-vetor acima.
+  **overlap para preservação de contexto**, **chunking semântico** (dividir por significado) e
+  **chunking recursivo/hierárquico**. A qualidade do chunking está a montante de toda métrica de
+  recuperação.
+- **O que entrou.** Chunking de ingestão configurável (`backend/app/rag/chunking.py` — fixo /
+  recursivo / semântico / agêntico) com knobs por estratégia (081) e um playground de preview; a
+  estratégia + estatísticas de chunk aparecem no painel Chunking do `RagDetail`, e re-ingerir a
+  partir do ⚙️ Settings reusa o caminho de reindex. Veja também 083 (tabela de chunks) e 087
+  (destaque de overlap).
 
-### 🟡 Metadados como cidadão de primeira classe
+### ✅ Metadados como cidadão de primeira classe — ENTREGUE (073-metadata-first-class)
 
-- **Onde aparece.** Ainda sem bloco; vive dentro da estação `rag` (lado do índice) e do futuro
-  retriever de **self-querying** acima.
 - **O que é.** A história de metadados do M2U3.3: anexar metadados úteis a cada trecho (fonte, seção,
-  autor, data, tipo), **extrair** metadados de documentos não estruturados na ingestão, **filtrar**
-  por eles na recuperação (o alvo do self-querying) e usá-los para **avaliação/depuração** (*por que
-  este trecho foi recuperado?*).
-- **O que uma spec adicionaria.** Um schema de metadados na coleção Chroma, um passo de extração no
-  `ingest.py`, um caminho de filtro `where=` no `retriever.py`, e metadados mostrados em cada trecho
-  recuperado no inspetor do Vector DB + `RagDetail`. Essa é a fundação sobre a qual o item
-  **self-querying** se apoia.
+  autor, data, tipo), **extrair** na ingestão, **filtrar** por eles na recuperação (o seam sobre o
+  qual o self-querying se apoia) e usá-los para **avaliação/depuração** (*por que este trecho foi
+  recuperado?*).
+- **O que entrou.** Metadados ricos por trecho na ingestão, um caminho de filtro `where=`/`filters=`
+  no `retriever.py`, e chips "por que recuperado" em cada trecho recuperado no inspetor do Vector DB
+  + `RagDetail`. O retriever de self-querying (ainda 🟡 acima) reusa esse seam de filtro.
 
-### 🟡 Métricas de qualidade de recuperação (Precision@k · MRR)
+### ✅ Métricas de qualidade de recuperação (Precision@k · MRR) — ENTREGUE (071-retrieval-metrics)
 
-- **Onde aparece.** Adjacente ao **Eval Runner** (RAGAS / LLM-como-juiz) do degrau Avançado abaixo —
-  mas estas são as métricas *específicas de recuperação* que pertencem ao degrau Intermediário, ao
-  lado do reranker que elas medem.
-- **O que é.** As medidas de qualidade de recuperação do M2U3.1 §4: **Precision@k** e **MRR** (o
-  trecho relevante estava no top-k, e quão alto?), o trade-off LLM-como-juiz vs. ground-truth manual,
-  e onde o **RAGAS** se encaixa. Elas quantificam se reranking / híbrida / MMR de fato ajudaram.
-- **O que uma spec adicionaria.** Um pequeno conjunto rotulado query → doc-relevante sob
-  `backend/app/data/`, um cálculo de métricas após a recuperação, e um readout no `RagDetail`
-  mostrando Precision@k / MRR para o run atual (para a afirmação *por que rerank?* ser medida, não
-  afirmada). A suíte completa de qualidade de resposta do **RAGAS** fica no **Eval Runner** Avançado.
+- **O que é.** As medidas de qualidade de recuperação do M2U3.1 §4: **Precision@k · Recall@k · MRR**
+  (o trecho relevante estava no top-k, e quão alto?), o trade-off LLM-como-juiz vs. ground-truth
+  manual, e onde o **RAGAS** se encaixa. Elas quantificam se reranking / híbrida / MMR de fato
+  ajudaram.
+- **O que entrou.** Um conjunto rotulado (golden set) + cálculo de métricas sobre `rag.retrieve`,
+  com readout mostrando Precision@k / Recall@k / MRR para o run atual (para a afirmação *por que
+  rerank?* ser medida, não afirmada). A suíte completa do **RAGAS** fica no **Eval Runner** Avançado
+  (🟡).
 
 ---
 
@@ -870,23 +846,15 @@ acima é o agrupamento autoritativo.
 Estas não têm bloco próprio — são costuras que o código já mantém abertas. Cada uma é um TODO
 genuíno para prontidão de produção.
 
-### 🔧 Suporte a múltiplos provedores de LLM — *track: `aiops`*
-- **Onde está a costura.** `backend/app/llm/provider.py` — a ABC `LLMProvider` é **explicitamente
-  mantida como uma costura fina**. Hoje `get_provider()` sempre devolve `OpenAIProvider`, e sem
-  `OPENAI_API_KEY` levanta `MissingAPIKeyError`. Mesma história para embeddings em
-  `backend/app/rag/embeddings.py`.
-- **O que falta.**
-  - Um segundo provedor concreto (ex.: `AnthropicProvider`, `AzureOpenAIProvider`, um provider
-    local via Ollama para dev offline) implementando `decide`, `stream_answer` e surfaceando
-    `TokenUsage` real.
-  - Seleção dirigida por config (env: `LLM_PROVIDER=openai|anthropic|...`) em vez de OpenAI fixo em
-    `get_provider()`.
-  - O mesmo para embeddings (a costura `EMBEDDING_PROVIDER`).
-- **Por que esse é o formato certo.** Uma vez que **multi-provider** entre, o **Gateway de LLM**
-  acima vira o orquestrador natural (roteando entre provedores, fallback quando um degrada).
-- **Checagem da constituição.** §2 atualmente exige *provedor único (OpenAI) obrigatório* —
-  adicionar multi-provider é uma **emenda** (constituição §A) antes do código. Abra uma spec em
-  `specs/` que proponha a emenda e a implementação juntas.
+### ✅ Suporte a múltiplos provedores de LLM — ENTREGUE (074-ollama-provider · 075-ollama-embeddings)
+- **O que é.** A ABC `LLMProvider` (`backend/app/llm/provider.py`) é uma costura fina; um segundo
+  provedor concreto implementa `decide`/`stream_answer` e surfaceia `TokenUsage` real.
+- **O que entrou.** **Ollama** é um provider real por-agente (`OllamaProvider`, coluna
+  `agents.provider`, URL em `app_config`) — um agente pode rodar inteiro num modelo local, sem chave
+  OpenAI. Embeddings também podem rodar em Ollama local (075), com provider/modelo instance-global e
+  auto-rebuild via assinatura de embedding. Isso **emendou a constituição §2** (não é mais provedor
+  único). O **Gateway de LLM** (🟡 acima) é o próximo orquestrador natural (roteamento + fallback
+  entre provedores).
 
 ### 🔧 Roteador de modelos (seleção de modelo por requisição) — *track: `aiops`*
 - **Onde a costura ficaria.** Dentro do futuro bloco **Gateway de LLM**, ou como um passo de
@@ -918,8 +886,8 @@ genuíno para prontidão de produção.
 - **O que uma spec adicionaria.** Um `TraceStore` plugável (impl Redis), uma troca do
   `Checkpointer` do LangGraph e um teste de carga demonstrando duas réplicas servindo a mesma
   conversa.
-- **Checagem da constituição.** §7 atualmente exige *instância única* — mesma história que
-  multi-provider: emendar a constituição como parte da spec.
+- **Checagem da constituição.** §7 atualmente exige *instância única* — assim como o
+  multi-provider emendou a §2 (074), emendar a constituição como parte da spec.
 
 ### 🔧 Segurança & confiança — as costuras de *cibersegurança*
 

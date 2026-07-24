@@ -15,6 +15,33 @@ which triggers the Release workflow.
 Use these categories: Added · Changed · Deprecated · Removed · Fixed · Security.
 -->
 
+### Added
+
+- **Arena — five new component kinds** (125): **Worker** (drains a queue off the
+  request path), **Guardrails** (per-call moderation toll on the model path),
+  **3rd-Party API** (a rate limit you don't control — not scalable), **Object Store**
+  (managed blob tier) and **Memory Store** (the agent's long-term memory: a read +
+  write every turn). Work wired **behind a queue** is now modeled as **async** — its
+  latency leaves the user-facing turn, and an overloaded consumer grows a **backlog**
+  instead of shedding 429s.
+- **Arena — grouped, searchable palette** (126): the component palette is organized
+  into titled categories (Client · Traffic & Edge · Agentic Core · Data · Scale &
+  Queues · External) with a search field, replacing the flat list.
+- **Arena — per-node model tier** (128): each LLM node picks a **model tier** (nano ·
+  mini · standard · large), each anchored to a real OpenAI SKU, scaling per-call
+  latency + cost — orthogonal to the instance-size quota/capacity knob.
+- **Arena ↔ Learn links** (121): every mapped component's ℹ️ explainer offers
+  **"Learn more"** deep links into the matching Learn topic, and each example preset
+  shows **concept chips** that open the same topics.
+
+### Changed
+
+- **Arena — realistic LLM latency** (127): recalibrated the decode rate to an
+  OpenAI-defensible ~125 tok/s (gpt-4.1-mini class), so the default agent call is
+  **~4.5 s** (was 0.8 s — the old figure implied an impossible ~1000 tok/s). Example
+  presets were retuned (more backend replicas) for the honestly larger held-stream
+  counts; capacity, quota and cost are unchanged (latency-only).
+
 ## [1.2.0] - 2026-07-23
 
 This release adds the **Arena** — a drag-and-drop **capacity sandbox** where you
