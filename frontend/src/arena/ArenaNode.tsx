@@ -36,6 +36,9 @@ export interface ArenaNodeData extends Record<string, unknown> {
    *  the model's elevated QPS + the multiplied e2e latency read as an agent trait.
    *  Only set for the harness node; `null` when it has no model child wired yet. */
   fanOut?: number | null;
+  /** 125 — drained off the request path (behind a queue): shows an "async" badge,
+   *  and overload reads as a growing BACKLOG, not a 429 shed. */
+  async?: boolean;
 }
 
 const STATUS_COLOR: Record<NodeStatus, string> = {
@@ -50,18 +53,24 @@ export function ArenaNode({ id, data, selected }: NodeProps) {
   const d = data as ArenaNodeData;
   const color = STATUS_COLOR[d.status];
   const pct = Math.round(d.utilization * 100);
+  // 125 — an async consumer that's over capacity grows a BACKLOG, not a 429 shed:
+  // it is not the red, user-facing bottleneck a synchronous node would be.
+  const backlog = d.async === true && d.bottleneck;
+  const hardBottleneck = d.bottleneck && !d.async;
 
   return (
     <div
       className="relative min-w-[150px] rounded-xl border bg-[var(--color-panel)] px-3 py-2 text-[var(--color-ink)] shadow-sm transition"
       data-highlighted={d.highlight ? id : undefined}
       style={{
-        borderColor: d.bottleneck
+        borderColor: hardBottleneck
           ? "var(--color-rose)"
-          : selected || d.highlight
-            ? "var(--color-sky)"
-            : "var(--color-line)",
-        boxShadow: d.bottleneck
+          : backlog
+            ? "var(--color-warn)"
+            : selected || d.highlight
+              ? "var(--color-sky)"
+              : "var(--color-line)",
+        boxShadow: hardBottleneck
           ? "0 0 0 2px color-mix(in srgb, var(--color-rose) 45%, transparent)"
           : d.highlight
             ? "0 0 0 2px color-mix(in srgb, var(--color-sky) 45%, transparent)"
@@ -84,6 +93,15 @@ export function ArenaNode({ id, data, selected }: NodeProps) {
       <div className="flex items-center justify-between gap-2">
         <span className="truncate text-[12px] font-semibold">{d.label}</span>
         <div className="flex shrink-0 items-center gap-1">
+          {/* 125 — an async box (behind a queue) is drained off the request path. */}
+          {d.async && (
+            <span
+              className="inline-block rounded bg-[var(--color-panel-2)] px-1 text-[9px] font-medium uppercase tracking-wide text-[var(--color-muted)]"
+              title={t.arena.inflightInfo}
+            >
+              {t.arena.asyncBadge}
+            </span>
+          )}
           {/* 120 — a note marker: the box carries the architect's justification. */}
           {d.note && (
             <span className="text-[10px] leading-none" aria-label={t.arena.noteLabel} title={d.note}>
@@ -165,7 +183,18 @@ export function ArenaNode({ id, data, selected }: NodeProps) {
         />
       </div>
 
-      {d.bottleneck && (
+      {/* 125 — an async consumer past capacity grows a backlog (amber, enqueued),
+          NOT a user-facing 429 shed (rose). */}
+      {backlog && (
+        <div className="mt-1 text-center text-[9px] font-semibold uppercase tracking-wide text-[var(--color-warn)]">
+          {t.arena.backlog}
+          <div className="font-mono text-[8.5px] font-normal normal-case tracking-normal">
+            {t.arena.backlogGrows(formatQps(d.shedRps))}
+          </div>
+        </div>
+      )}
+
+      {hardBottleneck && (
         <div className="mt-1 text-center text-[9px] font-semibold uppercase tracking-wide text-[var(--color-rose)]">
           {t.arena.bottleneck}
           <div className="font-mono text-[8.5px] font-normal normal-case tracking-normal">

@@ -89,7 +89,9 @@ describe("scaling vocabulary + info explainers (104 AC1/AC6)", () => {
     expect(KIND_META.client.scaling).toBeNull(); // the load source has no knobs
     // 123 — the agent harness runs in the backend process: also non-scalable.
     expect(KIND_META.agentHarness.scaling).toBeNull();
-    const NON_SCALABLE = new Set(["client", "agentHarness"]);
+    // 125 — the 3rd-party API (provider's quota) and the managed object store are
+    // not knobs the designer scales, like the client and the in-process harness.
+    const NON_SCALABLE = new Set(["client", "agentHarness", "externalApi", "objectStore"]);
     for (const kind of PALETTE_ORDER) {
       const s = KIND_META[kind].scaling;
       if (NON_SCALABLE.has(kind)) continue;

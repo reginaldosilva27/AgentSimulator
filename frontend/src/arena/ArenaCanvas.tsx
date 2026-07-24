@@ -162,6 +162,9 @@ export function ArenaCanvas() {
             connectionWall: budget !== null && heldHere !== null && heldHere > budget,
             highlight: n.id === highlightId,
             note: n.note,
+            // 125 — drained off the request path (behind a queue): async badge +
+            // backlog wording instead of a 429 shed.
+            async: m.async,
             // 123 — only the harness surfaces the turn fan-out badge.
             fanOut: n.kind === "agentHarness" ? fanOutFor({ nodes, edges }, n.id) : undefined,
           },

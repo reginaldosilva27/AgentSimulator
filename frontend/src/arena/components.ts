@@ -33,7 +33,15 @@ export type ArenaKind =
   | "cache"
   | "semanticCache"
   | "queue"
-  | "readReplica";
+  | "readReplica"
+  // 125-arena-component-expansion — real agent-platform components the palette
+  // was missing (the queue's consumer, the moderation toll, the dependency you
+  // can't scale, the blob tier, the agent's long-term memory).
+  | "worker"
+  | "guardrails"
+  | "externalApi"
+  | "objectStore"
+  | "memoryStore";
 
 export type InstanceSize = "small" | "medium" | "large" | "xlarge";
 
@@ -86,6 +94,25 @@ export const BENCHMARKS: Record<ArenaKind, Benchmark> = {
   semanticCache: { baseCapacity: 20_000, baseLatencyMs: 50 },
   queue: { baseCapacity: 20_000, baseLatencyMs: 5 },
   readReplica: { baseCapacity: 3_000, baseLatencyMs: 10 },
+  // 125 — a queue consumer: modest per-worker throughput, and a long service time
+  // (background jobs — embeddings, image work — are heavy). It's async ONLY when
+  // wired behind a queue (see model.ts), so that latency never reaches the user.
+  worker: { baseCapacity: 200, baseLatencyMs: 500 },
+  // 125 — content moderation on the model path. A fast classifier endpoint (Azure
+  // AI Content Safety / Bedrock Guardrails class): high throughput, but a real
+  // per-call latency toll — and, like the LLM, a rate-limited managed service.
+  guardrails: { baseCapacity: 1_000, baseLatencyMs: 60 },
+  // 125 — a 3rd-party dependency you call via a tool. Its rate limit is the
+  // PROVIDER's, not yours (scaling: null): low, fixed capacity + high, variable
+  // latency — the wall you escape with a cache or a higher provider tier, never a
+  // slider. Teaching order-of-magnitude (a partner API's per-key quota).
+  externalApi: { baseCapacity: 50, baseLatencyMs: 300 },
+  // 125 — managed blob storage (S3/Blob/GCS): effectively unbounded throughput,
+  // moderate latency. Not a database — you don't scale it, the provider does.
+  objectStore: { baseCapacity: 25_000, baseLatencyMs: 30 },
+  // 125 — the agent's long-term memory store (a KV/document store): a read at turn
+  // start + a write at turn end, so its default fan-out is 2 (see DEFAULT_CPR).
+  memoryStore: { baseCapacity: 3_000, baseLatencyMs: 15 },
 };
 
 /** Default cache hit-ratio (editable per node); only misses reach the downstream. */
@@ -108,13 +135,26 @@ export function defaultHitRatioFor(kind: ArenaKind): number {
 }
 
 /** 103 — kinds whose per-request call fan-out is user-configurable (the ReAct loop
- *  makes 2–5 model calls per turn; tools/retrieval can be hit more than once). */
+ *  makes 2–5 model calls per turn; tools/retrieval can be hit more than once).
+ *  125 — guardrails (input + output moderation) and the memory store (read + write)
+ *  are hit multiple times per turn too. */
 export const CALLS_CONFIGURABLE: ReadonlySet<ArenaKind> = new Set<ArenaKind>([
   "llm",
   "aiGateway",
   "mcp",
   "vectorDb",
+  "guardrails",
+  "memoryStore",
 ]);
+
+/** 125 — per-kind DEFAULT fan-out for kinds hit more than once per turn (applied
+ *  on node creation in store.ts). Guardrails checks the input AND the output of
+ *  each turn; the memory store reads at the start and writes at the end. Kinds
+ *  absent here default to 1 (the pre-125 behavior — presets set cpr explicitly). */
+export const DEFAULT_CPR: Partial<Record<ArenaKind, number>> = {
+  guardrails: 2,
+  memoryStore: 2,
+};
 
 /** 106/116 — the curated region list (cloud-agnostic codes; proper-noun-like, not
  *  translated — every provider has analogues). Since 114 it has teeth (regional
@@ -490,23 +530,161 @@ export const KIND_META: Record<ArenaKind, KindMeta> = {
       sizeMeaning: { en: "Instance class (vCPU / RAM)", pt: "Classe da instância (vCPU / RAM)" },
     },
   },
+  worker: {
+    label: { en: "Worker", pt: "Worker" },
+    description: {
+      en: "Drains the queue off the request path",
+      pt: "Consome a fila fora do caminho da requisição",
+    },
+    clouds: { azure: "Container Apps Jobs", aws: "ECS / Lambda", gcp: "Cloud Run Jobs" },
+    info: {
+      en: "A background consumer that processes jobs off a queue (embeddings, image work, notifications). Wired BEHIND a queue its service time is ASYNC — it never reaches the user-facing turn; an overloaded worker grows a BACKLOG rather than shedding user requests. Units are worker instances; size is each one's vCPU/memory.",
+      pt: "Um consumidor em segundo plano que processa jobs de uma fila (embeddings, imagens, notificações). Ligado ATRÁS de uma fila, seu tempo de serviço é ASSÍNCRONO — nunca chega ao turno do usuário; um worker sobrecarregado acumula FILA em vez de derrubar requisições do usuário. As unidades são instâncias de worker; o tamanho é o vCPU/memória de cada uma.",
+    },
+    scaling: {
+      unit: { en: "Workers", pt: "Workers" },
+      sizeMeaning: { en: "vCPU / memory per worker", pt: "vCPU / memória por worker" },
+    },
+  },
+  guardrails: {
+    label: { en: "Guardrails", pt: "Guardrails" },
+    description: {
+      en: "Moderation check on every model call",
+      pt: "Moderação em cada chamada ao modelo",
+    },
+    clouds: { azure: "AI Content Safety", aws: "Bedrock Guardrails", gcp: "Model Armor" },
+    info: {
+      en: "Content moderation / safety filtering on the model path. It forwards 100% of traffic (it doesn't cache), but adds a per-call latency TOLL and, like the model, is a rate-limited managed service. 'Calls per request' defaults to 2 — the input and the output of each turn are both checked. The lesson: a guardrail is never free — you pay for it in latency on every turn.",
+      pt: "Moderação de conteúdo / filtragem de segurança no caminho do modelo. Repassa 100% do tráfego (não faz cache), mas adiciona um PEDÁGIO de latência por chamada e, como o modelo, é um serviço gerenciado com rate limit. 'Chamadas por request' começa em 2 — a entrada e a saída de cada turno são verificadas. A lição: um guardrail nunca é grátis — você paga em latência a cada turno.",
+    },
+    scaling: {
+      unit: { en: "Instances", pt: "Instâncias" },
+      sizeMeaning: { en: "Service tier", pt: "Tier do serviço" },
+    },
+  },
+  externalApi: {
+    label: { en: "3rd-Party API", pt: "API de terceiros" },
+    description: {
+      en: "A rate limit you don't control",
+      pt: "Um rate limit que você não controla",
+    },
+    clouds: { azure: "External service", aws: "External service", gcp: "External service" },
+    info: {
+      en: "An external service the agent calls through a tool (a partner API, a SaaS). Its capacity is the PROVIDER's, not yours — so there is no size/replica knob here. When you hit its limit you can't add servers; the honest escapes are architectural: cache its responses, call it less often, or negotiate a higher provider tier. High, variable latency: an outside dependency can be slow or fail.",
+      pt: "Um serviço externo que o agente chama por uma tool (uma API de parceiro, um SaaS). A capacidade é do PROVEDOR, não sua — por isso não há controle de tamanho/réplicas aqui. Ao bater no limite você não adiciona servidores; as saídas honestas são arquiteturais: cachear as respostas, chamar menos, ou negociar um tier maior com o provedor. Latência alta e variável: uma dependência externa pode ser lenta ou falhar.",
+    },
+    scaling: null,
+  },
+  objectStore: {
+    label: { en: "Object Store", pt: "Object Store" },
+    description: {
+      en: "Blobs and files — not a database",
+      pt: "Blobs e arquivos — não é banco de dados",
+    },
+    clouds: { azure: "Blob Storage", aws: "S3", gcp: "Cloud Storage" },
+    info: {
+      en: "Managed blob storage for large files (uploads, artifacts, images). Effectively unbounded throughput and moderate latency — and you don't scale it, the provider does (no size/replica knob). Keep large objects HERE, not in the relational database: blobs bloat a DB and evict its hot rows.",
+      pt: "Armazenamento gerenciado de blobs para arquivos grandes (uploads, artefatos, imagens). Vazão praticamente ilimitada e latência moderada — e você não o escala, o provedor escala (sem controle de tamanho/réplicas). Guarde objetos grandes AQUI, não no banco relacional: blobs incham o banco e expulsam suas linhas quentes.",
+    },
+    scaling: null,
+  },
+  memoryStore: {
+    label: { en: "Memory Store", pt: "Memória do agente" },
+    description: {
+      en: "Long-term memory: read + write every turn",
+      pt: "Memória de longo prazo: leitura + escrita a cada turno",
+    },
+    clouds: { azure: "Cosmos DB", aws: "DynamoDB", gcp: "Firestore" },
+    info: {
+      en: "The agent's long-term memory (a KV / document store): it reads context at the START of a turn and writes the new state at the END, so 'calls per request' defaults to 2. Distinct from the vector DB (semantic recall) and the app DB (transactional system of record): memory is the agent's own scratch across turns. Units are replicas; size is the instance class.",
+      pt: "A memória de longo prazo do agente (um store KV / de documentos): lê o contexto no INÍCIO do turno e escreve o novo estado no FIM, então 'chamadas por request' começa em 2. Diferente do vector DB (recall semântico) e do app DB (fonte da verdade transacional): a memória é o rascunho do próprio agente entre turnos. As unidades são réplicas; o tamanho é a classe da instância.",
+    },
+    scaling: {
+      unit: { en: "Replicas", pt: "Réplicas" },
+      sizeMeaning: { en: "Instance class (vCPU / RAM)", pt: "Classe da instância (vCPU / RAM)" },
+    },
+  },
 };
 
-/** The palette order (agentic stations first, then scaling primitives). */
-export const PALETTE_ORDER: readonly ArenaKind[] = [
-  "client",
-  "backend",
-  "agentHarness",
-  "llm",
-  "vectorDb",
-  "mcp",
-  "appDb",
-  "cdn",
-  "apiGateway",
-  "aiGateway",
-  "loadBalancer",
-  "cache",
-  "semanticCache",
-  "queue",
-  "readReplica",
+/** 126-arena-palette-groups — the palette organized by component type. A titled,
+ *  ordered group tells the architecture's story top-down (client → edge → agentic
+ *  core → data → scale/queues → external); the small-caps headers make the palette
+ *  a map of the platform's tiers. Every kind belongs to EXACTLY ONE group (a test
+ *  pins this against the full catalog), and PALETTE_ORDER is derived from it — no
+ *  second hand-kept list. Titles are translatable prose ({en,pt}); kinds are ids. */
+export interface PaletteGroup {
+  id: "client" | "edge" | "agenticCore" | "data" | "scaleQueues" | "external";
+  title: Record<Lang, string>;
+  kinds: ArenaKind[];
+}
+
+export const PALETTE_GROUPS: readonly PaletteGroup[] = [
+  {
+    id: "client",
+    title: { en: "Client", pt: "Cliente" },
+    kinds: ["client"],
+  },
+  {
+    id: "edge",
+    title: { en: "Traffic & Edge", pt: "Tráfego & Edge" },
+    kinds: ["cdn", "apiGateway", "loadBalancer"],
+  },
+  {
+    // aiGateway + guardrails live here (not edge): they exist because of the
+    // MODEL path, not generic ingress.
+    id: "agenticCore",
+    title: { en: "Agentic Core", pt: "Núcleo agêntico" },
+    kinds: ["backend", "agentHarness", "llm", "aiGateway", "guardrails", "mcp"],
+  },
+  {
+    id: "data",
+    title: { en: "Data", pt: "Dados" },
+    kinds: ["vectorDb", "appDb", "readReplica", "memoryStore", "objectStore"],
+  },
+  {
+    // the worker sits with the queue it drains.
+    id: "scaleQueues",
+    title: { en: "Scale & Queues", pt: "Escala & Filas" },
+    kinds: ["cache", "semanticCache", "queue", "worker"],
+  },
+  {
+    id: "external",
+    title: { en: "External", pt: "Externo" },
+    kinds: ["externalApi"],
+  },
 ];
+
+/** The flat palette order — DERIVED from the groups (single source of truth). */
+export const PALETTE_ORDER: readonly ArenaKind[] = PALETTE_GROUPS.flatMap((g) => g.kinds);
+
+/** 126 — fold case + accents so "memoria" matches "Memória" (display-text match). */
+function normalize(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+/** 126 — filter the palette by a search query against each kind's label +
+ *  description in the ACTIVE language. Empty/whitespace query returns the groups
+ *  unchanged; groups with no surviving kinds are dropped (so no empty headers). */
+export function filterPalette(
+  groups: readonly PaletteGroup[],
+  query: string,
+  lang: Lang,
+): PaletteGroup[] {
+  const q = normalize(query);
+  if (!q) return groups as PaletteGroup[];
+  const result: PaletteGroup[] = [];
+  for (const g of groups) {
+    const kinds = g.kinds.filter((kind) => {
+      const meta = KIND_META[kind];
+      return (
+        normalize(meta.label[lang]).includes(q) || normalize(meta.description[lang]).includes(q)
+      );
+    });
+    if (kinds.length) result.push({ ...g, kinds });
+  }
+  return result;
+}

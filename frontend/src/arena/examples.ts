@@ -418,6 +418,68 @@ const RAW_EXAMPLES: ArenaExample[] = [
     }),
   },
   {
+    // 125-arena-component-expansion — two lessons in one design: the guardrails
+    // moderation TOLL (a per-call latency tax on the model path) and the queue
+    // DECOUPLING (async ingestion drains off the request path, so the worker's
+    // heavy service time never reaches the user).
+    id: "guardrails-async",
+    claims: { demandRps: 200, llm: "healthy" },
+    title: { en: "Guardrails + async ingestion", pt: "Guardrails + ingestão assíncrona" },
+    description: {
+      en: "4k users (≈200 req/s). Guardrails moderate every turn (a latency toll), and document ingestion runs async behind a queue — its worker's heavy jobs never touch the user-facing turn.",
+      pt: "4 mil usuários (≈200 req/s). Guardrails moderam cada turno (um pedágio de latência), e a ingestão de documentos roda assíncrona atrás de uma fila — os jobs pesados do worker nunca tocam o turno do usuário.",
+    },
+    callouts: [
+      {
+        nodeId: "guard",
+        text: {
+          en: "Moderation runs on every turn (input + output) — it forwards everything but adds latency each time. A guardrail is never free: you pay for it on the turn path.",
+          pt: "A moderação roda a cada turno (entrada + saída) — repassa tudo mas adiciona latência sempre. Um guardrail nunca é grátis: você paga no caminho do turno.",
+        },
+      },
+      {
+        nodeId: "worker",
+        text: {
+          en: "Ingestion drains a queue OFF the request path: this worker's heavy jobs are async, so their latency never reaches the user — only the enqueue does. Oversize it and it grows a backlog, not 429s.",
+          pt: "A ingestão consome uma fila FORA do caminho da requisição: os jobs pesados deste worker são assíncronos, então sua latência nunca chega ao usuário — só o enfileiramento chega. Se ficar pequeno, acumula fila, não 429.",
+        },
+      },
+      {
+        nodeId: "mem",
+        text: {
+          en: "The agent's long-term memory: a read at the start of the turn and a write at the end (×2 per request) — distinct from retrieval (vector DB) and the system of record (app DB).",
+          pt: "A memória de longo prazo do agente: uma leitura no início do turno e uma escrita no fim (×2 por request) — diferente da recuperação (vector DB) e da fonte da verdade (app DB).",
+        },
+      },
+    ],
+    build: () => ({
+      users: 4_000,
+      thinkTimeSec: 20,
+      nodes: [
+        node("client", "client", 0, ROW * 1.5),
+        node("backend", "backend", COL, ROW * 1.5, { replicas: 2 }),
+        // Moderation on the model path — a leaf hit twice per turn (in + out).
+        node("guard", "guardrails", COL * 2, 0, { callsPerRequest: 2 }),
+        node("llm", "llm", COL * 2, ROW, { callsPerRequest: 2, replicas: 6 }),
+        node("vectorDb", "vectorDb", COL * 2, ROW * 2),
+        // Long-term memory: read at turn start + write at turn end.
+        node("mem", "memoryStore", COL * 2, ROW * 3, { callsPerRequest: 2 }),
+        // Async ingestion pipeline: the queue decouples, the worker drains it.
+        node("queue", "queue", COL * 2, ROW * 4),
+        node("worker", "worker", COL * 3, ROW * 4, { replicas: 2 }),
+      ],
+      edges: [
+        edge("client", "backend"),
+        edge("backend", "guard"),
+        edge("backend", "llm"),
+        edge("backend", "vectorDb"),
+        edge("backend", "mem"),
+        edge("backend", "queue"),
+        edge("queue", "worker"),
+      ],
+    }),
+  },
+  {
     // 116 AC5 — the quota lesson, part 1: two pools STACKED in one region share
     // the regional quota (subscription-level, not per-deployment) — provisioned
     // 4,800 calls/s of raw capacity, capped at 3,000, shedding under 3,200.

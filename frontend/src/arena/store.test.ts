@@ -50,6 +50,18 @@ describe("arena store — Little's Law drive (103 AC1)", () => {
     expect(useArena.getState().exampleId).toBeNull(); // structural edit
     void id;
   });
+
+  // 125 — kinds hit more than once per turn seed their fan-out on creation.
+  it("seeds DEFAULT_CPR on creation: guardrails + memory store default to 2 (125 AC4/AC6)", () => {
+    const guard = useArena.getState().addNode("guardrails", { x: 0, y: 0 });
+    const mem = useArena.getState().addNode("memoryStore", { x: 0, y: 0 });
+    const llm = useArena.getState().addNode("llm", { x: 0, y: 0 });
+    const byId = (id: string) => useArena.getState().nodes.find((n) => n.id === id)!;
+    expect(byId(guard).callsPerRequest).toBe(2);
+    expect(byId(mem).callsPerRequest).toBe(2);
+    // kinds without a default stay unset (cpr 1 at model time) — pre-125 behavior.
+    expect(byId(llm).callsPerRequest).toBeUndefined();
+  });
 });
 
 describe("arena store — composition + persistence (AC9)", () => {

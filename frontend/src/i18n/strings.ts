@@ -81,6 +81,9 @@ export interface Strings {
     honesty: string; // the §3 "this is a model, not a live load test" banner
     paletteTitle: string;
     paletteHint: string;
+    // 126-arena-palette-groups — the palette search field + its empty state.
+    searchPlaceholder: string;
+    searchEmpty: string;
     examples: string; // 101 — the "load an example scenario" menu label
     emptyCanvas: string;
     // 103 — the Little's-Law load drive (concurrent users ÷ think time = rps).
@@ -158,6 +161,11 @@ export interface Strings {
     sizes: { small: string; medium: string; large: string; xlarge: string };
     cacheHitRatio: string;
     bottleneck: string;
+    // 125 — a node drained off the request path (behind a queue): its work is
+    // asynchronous, and overload grows a backlog instead of shedding 429s.
+    asyncBadge: string;
+    backlog: string; // the failure-mode title (vs "bottleneck")
+    backlogGrows: (n: string) => string;
     selectHint: string;
     remove: string;
     // 120-arena-annotations — the user's own free-text note on a node/edge.
@@ -1343,6 +1351,8 @@ const en: Strings = {
       "Estimated model — not a live load test. The numbers are analytical, derived from stated per-component benchmarks; no real traffic is sent.",
     paletteTitle: "Components",
     paletteHint: "Drag onto the canvas to add",
+    searchPlaceholder: "Search components…",
+    searchEmpty: "No components match",
     examples: "Examples",
     emptyCanvas: "Drag a component here to start building",
     usersLabel: "Concurrent users",
@@ -1424,6 +1434,9 @@ const en: Strings = {
     sizes: { small: "Small", medium: "Medium", large: "Large", xlarge: "XLarge" },
     cacheHitRatio: "Cache hit ratio",
     bottleneck: "Bottleneck",
+    asyncBadge: "async",
+    backlog: "Backlog",
+    backlogGrows: (n) => `backlog grows +${n}/s — enqueued, not dropped`,
     selectHint: "Select a component to scale it",
     remove: "Remove",
     noteLabel: "Note",
@@ -2725,6 +2738,8 @@ const pt: Strings = {
       "Modelo estimado — não é teste de carga real. Os números são analíticos, a partir de benchmarks declarados por componente; nenhum tráfego real é enviado.",
     paletteTitle: "Componentes",
     paletteHint: "Arraste para o canvas para adicionar",
+    searchPlaceholder: "Buscar componentes…",
+    searchEmpty: "Nenhum componente encontrado",
     examples: "Exemplos",
     emptyCanvas: "Arraste um componente aqui para começar a montar",
     usersLabel: "Usuários simultâneos",
@@ -2807,6 +2822,9 @@ const pt: Strings = {
     sizes: { small: "Pequeno", medium: "Médio", large: "Grande", xlarge: "Extra grande" },
     cacheHitRatio: "Taxa de acerto do cache",
     bottleneck: "Gargalo",
+    asyncBadge: "assíncrono",
+    backlog: "Acúmulo",
+    backlogGrows: (n) => `fila acumula +${n}/s — enfileirado, não descartado`,
     selectHint: "Selecione um componente para escalá-lo",
     remove: "Remover",
     noteLabel: "Nota",

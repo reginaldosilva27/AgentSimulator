@@ -12,6 +12,7 @@ import {
   ARENA_REGIONS,
   CALL_SHAPE_BOUNDS,
   DEFAULT_CALL_SHAPE,
+  DEFAULT_CPR,
   defaultHitRatioFor,
   INSTANCE_SIZES,
   isCacheLike,
@@ -324,6 +325,9 @@ export const useArena = create<ArenaStore>((set, get) => {
         x: pos.x,
         y: pos.y,
         ...(isCacheLike(kind) ? { hitRatio: defaultHitRatioFor(kind) } : {}),
+        // 125 — kinds hit more than once per turn (guardrails: in+out moderation;
+        // memory store: read+write) seed their fan-out; others default to 1.
+        ...(DEFAULT_CPR[kind] ? { callsPerRequest: DEFAULT_CPR[kind] } : {}),
         // 116 — infrastructure defaults to East US; the client is the users,
         // not a deployable box, so it carries no region.
         ...(kind === "client" ? {} : { region: DEFAULT_REGION }),

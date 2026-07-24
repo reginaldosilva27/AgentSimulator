@@ -888,3 +888,114 @@ describe("123 — the agent harness node", () => {
     expect(fanOutFor({ nodes: [n("harness", "agentHarness")], edges: [] }, "harness")).toBeNull();
   });
 });
+
+// --- 125-arena-component-expansion — async work behind a queue --------------------
+
+describe("125 — async work behind a queue leaves the turn path (AC2, AC3)", () => {
+  // client → backend → queue → worker : the worker drains the queue off the
+  // request path, so its service time never reaches the user.
+  const asyncDesign = (workerLatencyKind: "worker" = "worker"): ArenaDesign => ({
+    nodes: [
+      n("client", "client"),
+      n("backend", "backend"),
+      n("queue", "queue"),
+      n("worker", workerLatencyKind),
+    ],
+    edges: [e("client", "backend"), e("backend", "queue"), e("queue", "worker")],
+  });
+
+  it("flags a node reached ONLY through a queue as async", () => {
+    const m = computeMetrics(asyncDesign(), 100);
+    expect(m.get("worker")!.async).toBe(true);
+    expect(m.get("queue")!.async).toBe(false); // enqueue is synchronous
+    expect(m.get("backend")!.async).toBe(false);
+  });
+
+  it("does NOT flag async when a synchronous path also reaches the node (diamond)", () => {
+    // backend → worker (direct, sync) AND backend → queue → worker (async):
+    // at least one inbound path is synchronous, so the node is synchronous.
+    const design: ArenaDesign = {
+      nodes: [n("client", "client"), n("backend", "backend"), n("queue", "queue"), n("worker", "worker")],
+      edges: [
+        e("client", "backend"),
+        e("backend", "queue"),
+        e("queue", "worker"),
+        e("backend", "worker"),
+      ],
+    };
+    expect(computeMetrics(design, 100).get("worker")!.async).toBe(false);
+  });
+
+  it("the async branch's latency does NOT reach the user-facing turn (AC2)", () => {
+    // Worker latency is huge; the queue's own enqueue latency is what the user waits on.
+    const e2e = endToEndLatencyMs(asyncDesign(), 100);
+    // The turn path is backend + queue enqueue, NOT + the worker's 500ms service time.
+    const queueLat = BENCHMARKS.queue.baseLatencyMs;
+    const backendLat = BENCHMARKS.backend.baseLatencyMs;
+    // generous upper bound: everything synchronous, but far below adding the worker's 500ms
+    expect(e2e).toBeLessThan(backendLat + queueLat + BENCHMARKS.worker.baseLatencyMs);
+    expect(e2e).toBeLessThan(200); // backend(20) + queue(5) region, nowhere near 500
+  });
+
+  it("changing the async worker's service time does not move the e2e turn latency", () => {
+    // Two designs identical except the worker's replicas (which changes its util →
+    // its queue latency). Since the worker is async, e2e is invariant.
+    const slow = asyncDesign();
+    const fast: ArenaDesign = {
+      ...slow,
+      nodes: slow.nodes.map((sp) => (sp.id === "worker" ? { ...sp, replicas: 8 } : sp)),
+    };
+    expect(endToEndLatencyMs(fast, 100)).toBe(endToEndLatencyMs(slow, 100));
+  });
+
+  it("an overloaded async consumer does not null the upstream held-in-flight (AC3)", () => {
+    // Push load far past the worker's capacity: it would 'shed' if synchronous,
+    // which nulls upstream held. Because it's async (backlog, not 429s), the
+    // backend's held stays a real number.
+    const load = BENCHMARKS.worker.baseCapacity * 5; // crushes the worker
+    const held = heldInFlight(asyncDesign(), load);
+    expect(held.get("backend"), "backend held is a real number").not.toBeNull();
+    // the worker is still over capacity in the raw metrics (backlog grows)
+    expect(computeMetrics(asyncDesign(), load).get("worker")!.utilization).toBeGreaterThan(1);
+  });
+
+  it("guardrails is a pass-through that adds to the turn path (AC4)", () => {
+    // backend → guardrails(leaf) : forwards 100% (no hit ratio) and its latency,
+    // times its default fan-out, is added to the turn.
+    const design: ArenaDesign = {
+      nodes: [n("client", "client"), n("backend", "backend"), n("guard", "guardrails", { callsPerRequest: 2 })],
+      edges: [e("client", "backend"), e("backend", "guard")],
+    };
+    const m = computeMetrics(design, 100);
+    // 100 req/s × cpr 2 = 200 calls/s arrive at guardrails (no hit-ratio shaving).
+    expect(m.get("guard")!.arriving).toBeCloseTo(200, 5);
+    // it is NOT async (no queue in front) — it lengthens the turn.
+    expect(m.get("guard")!.async).toBe(false);
+    const withGuard = endToEndLatencyMs(design, 100);
+    const withoutGuard = endToEndLatencyMs(
+      { nodes: design.nodes.filter((sp) => sp.id !== "guard"), edges: [e("client", "backend")] },
+      100,
+    );
+    expect(withGuard).toBeGreaterThan(withoutGuard); // the moderation tax is visible
+  });
+
+  it("the memory store sees the turn's read + write (AC6)", () => {
+    const design: ArenaDesign = {
+      nodes: [n("client", "client"), n("backend", "backend"), n("mem", "memoryStore", { callsPerRequest: 2 })],
+      edges: [e("client", "backend"), e("backend", "mem")],
+    };
+    // 1000 turns/s arriving at the backend → 2000 memory calls/s (read + write).
+    expect(computeMetrics(design, 1000).get("mem")!.arriving).toBeCloseTo(2000, 5);
+  });
+
+  it("the 3rd-party API sheds honestly when overloaded (AC5)", () => {
+    const design: ArenaDesign = {
+      nodes: [n("client", "client"), n("backend", "backend"), n("api", "externalApi")],
+      edges: [e("client", "backend"), e("backend", "api")],
+    };
+    const over = BENCHMARKS.externalApi.baseCapacity * 4;
+    const m = computeMetrics(design, over);
+    expect(m.get("api")!.shedRps).toBeGreaterThan(0); // the provider's 429s, synchronous
+    expect(m.get("api")!.async).toBe(false);
+  });
+});

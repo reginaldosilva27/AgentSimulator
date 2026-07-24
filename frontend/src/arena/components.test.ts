@@ -10,6 +10,7 @@ import {
   CALLS_CONFIGURABLE,
   CONCURRENCY_BUDGET_PER_UNIT,
   DEFAULT_CALL_SHAPE,
+  DEFAULT_CPR,
   DEFAULT_HIT_RATIO,
   DEFAULT_SEMANTIC_HIT_RATIO,
   isCacheLike,
@@ -23,6 +24,9 @@ import {
   regionalLlmQuotaRpsFor,
   splitsLoad,
   PALETTE_ORDER,
+  PALETTE_GROUPS,
+  filterPalette,
+  type ArenaKind,
 } from "./components";
 import { computeMetrics, type ArenaDesign } from "./model";
 
@@ -184,5 +188,124 @@ describe("123 — the agent harness component (AC1, AC2)", () => {
     expect(isCacheLike("agentHarness")).toBe(false);
     expect(CALLS_CONFIGURABLE.has("agentHarness")).toBe(false);
     expect(CONCURRENCY_BUDGET_PER_UNIT.agentHarness).toBeUndefined();
+  });
+});
+
+// --- 125-arena-component-expansion ------------------------------------------------
+
+describe("125 — five new component kinds, full metadata (AC1)", () => {
+  const NEW_KINDS: ArenaKind[] = [
+    "worker",
+    "guardrails",
+    "externalApi",
+    "objectStore",
+    "memoryStore",
+  ];
+
+  it("each new kind has a benchmark, complete bilingual metadata and cloud examples", () => {
+    for (const kind of NEW_KINDS) {
+      expect(BENCHMARKS[kind], `${kind} benchmark`).toBeDefined();
+      expect(BENCHMARKS[kind].baseCapacity, `${kind} capacity`).toBeGreaterThan(0);
+      const meta = KIND_META[kind];
+      expect(meta.label.en.trim(), `${kind} label.en`).toBeTruthy();
+      expect(meta.label.pt.trim(), `${kind} label.pt`).toBeTruthy();
+      expect(meta.description.en.trim(), `${kind} desc.en`).toBeTruthy();
+      expect(meta.description.pt.trim(), `${kind} desc.pt`).toBeTruthy();
+      expect(meta.info.en.trim(), `${kind} info.en`).toBeTruthy();
+      expect(meta.info.pt.trim(), `${kind} info.pt`).toBeTruthy();
+      expect(meta.clouds.azure.trim(), `${kind} azure`).toBeTruthy();
+      expect(meta.clouds.aws.trim(), `${kind} aws`).toBeTruthy();
+      expect(meta.clouds.gcp.trim(), `${kind} gcp`).toBeTruthy();
+    }
+  });
+
+  it("lists all five on the palette", () => {
+    for (const kind of NEW_KINDS) expect(PALETTE_ORDER).toContain(kind);
+  });
+
+  it("guardrails is a pass-through toll: not a router, not cache-like, fan-out configurable (AC4)", () => {
+    expect(splitsLoad("guardrails")).toBe(false);
+    expect(isCacheLike("guardrails")).toBe(false);
+    expect(CALLS_CONFIGURABLE.has("guardrails")).toBe(true);
+    // default 2 checks/call (input + output moderation)
+    expect(DEFAULT_CPR.guardrails).toBe(2);
+  });
+
+  it("memory store models a read + write every turn (AC6)", () => {
+    expect(CALLS_CONFIGURABLE.has("memoryStore")).toBe(true);
+    expect(DEFAULT_CPR.memoryStore).toBe(2);
+    expect(KIND_META.memoryStore.scaling).not.toBeNull();
+  });
+
+  it("the 3rd-party API cannot be scaled by the designer (AC5)", () => {
+    // Same UI treatment as the client: no size/replica knobs (scaling === null).
+    expect(KIND_META.externalApi.scaling).toBeNull();
+    // Its capacity is the provider's fixed benchmark, not a knob you own.
+    expect(BENCHMARKS.externalApi.baseCapacity).toBeGreaterThan(0);
+  });
+
+  it("the object store is a managed blob tier (not a knob you scale)", () => {
+    expect(KIND_META.objectStore.scaling).toBeNull();
+    // Blobs are high-throughput and not the database — capacity ≫ appDb.
+    expect(BENCHMARKS.objectStore.baseCapacity).toBeGreaterThan(BENCHMARKS.appDb.baseCapacity);
+  });
+
+  it("the worker is a plain, scalable compute consumer", () => {
+    expect(KIND_META.worker.scaling).not.toBeNull();
+    expect(splitsLoad("worker")).toBe(false);
+    expect(isCacheLike("worker")).toBe(false);
+    // async-ness is a property of the WIRING (behind a queue), never the kind:
+    expect(CALLS_CONFIGURABLE.has("worker")).toBe(false);
+  });
+});
+
+// --- 126-arena-palette-groups -----------------------------------------------------
+
+describe("126 — the palette is grouped by component type (AC1)", () => {
+  it("every kind appears in exactly one group, and PALETTE_ORDER is the flatten", () => {
+    const grouped = PALETTE_GROUPS.flatMap((g) => g.kinds);
+    // exactly-once: no duplicates, and the set equals the full kind catalog.
+    expect(new Set(grouped).size, "no kind is listed twice").toBe(grouped.length);
+    const allKinds = Object.keys(BENCHMARKS) as ArenaKind[];
+    expect(new Set(grouped)).toEqual(new Set(allKinds));
+    // PALETTE_ORDER is DERIVED from the groups (no second hand-kept list).
+    expect(PALETTE_ORDER).toEqual(grouped);
+  });
+
+  it("each group has a bilingual title and at least one kind", () => {
+    for (const g of PALETTE_GROUPS) {
+      expect(g.title.en.trim(), `${g.id} title.en`).toBeTruthy();
+      expect(g.title.pt.trim(), `${g.id} title.pt`).toBeTruthy();
+      expect(g.kinds.length, `${g.id} non-empty`).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("126 — filterPalette narrows by label/description (AC3)", () => {
+  it("matches on label or description in the active language, dropping empty groups", () => {
+    const cacheHits = filterPalette(PALETTE_GROUPS, "cache", "en").flatMap((g) => g.kinds);
+    expect(cacheHits).toContain("cache");
+    expect(cacheHits).toContain("semanticCache");
+    // an unrelated kind (client) is filtered out
+    expect(cacheHits).not.toContain("client");
+    // every returned group is non-empty
+    for (const g of filterPalette(PALETTE_GROUPS, "cache", "en")) {
+      expect(g.kinds.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("is case- and accent-insensitive, per language", () => {
+    // "memoria" (no accent, lowercase) matches the pt label "Memória do agente".
+    const pt = filterPalette(PALETTE_GROUPS, "MEMORIA", "pt").flatMap((g) => g.kinds);
+    expect(pt).toContain("memoryStore");
+  });
+
+  it("returns an empty list when nothing matches", () => {
+    expect(filterPalette(PALETTE_GROUPS, "zzzznotathing", "en")).toEqual([]);
+  });
+
+  it("returns all groups for an empty query", () => {
+    expect(filterPalette(PALETTE_GROUPS, "", "en")).toEqual(PALETTE_GROUPS);
+    expect(filterPalette(PALETTE_GROUPS, "   ", "en")).toEqual(PALETTE_GROUPS);
   });
 });

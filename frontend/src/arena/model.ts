@@ -88,6 +88,11 @@ export interface NodeMetrics {
   /** 114 — fraction of an LLM pool's capacity the regional quota allows (1 when
    *  the region is under quota; < 1 squeezes every pool in the region equally). */
   quotaFactor: number;
+  /** 125 — true when EVERY inbound path to this node crosses a queue: the work is
+   *  drained off the request path, so its latency never reaches the user-facing
+   *  turn and its overload is a BACKLOG, not a shed (429). A property of the
+   *  WIRING, not the kind — any node placed behind a queue earns it. */
+  async: boolean;
 }
 
 const WARNING_UTIL = 0.7;
@@ -223,14 +228,17 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
   const shape = design.callShape ?? DEFAULT_CALL_SHAPE;
   const nodes = new Map(design.nodes.map((sp) => [sp.id, sp]));
   const childrenOf = new Map<string, string[]>();
+  const parentsOf = new Map<string, string[]>();
   const indegree = new Map<string, number>();
   for (const sp of design.nodes) {
     childrenOf.set(sp.id, []);
+    parentsOf.set(sp.id, []);
     indegree.set(sp.id, 0);
   }
   for (const edge of design.edges) {
     if (!nodes.has(edge.source) || !nodes.has(edge.target)) continue;
     childrenOf.get(edge.source)!.push(edge.target);
+    parentsOf.get(edge.target)!.push(edge.source);
     indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1);
   }
 
@@ -278,6 +286,21 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
   }
 
   const reached = new Set(order);
+
+  // 125 — async detection: a node is async when it has parents AND every parent is
+  // a queue OR is itself async — i.e. EVERY inbound path crosses a queue. Computed
+  // in topological order so every parent's flag is known first. A synchronous path
+  // to the node (a diamond with one direct parent) keeps it synchronous.
+  const asyncSet = new Set<string>();
+  for (const id of order) {
+    const parents = parentsOf.get(id)!;
+    if (parents.length === 0) continue; // a source is synchronous
+    const allViaQueue = parents.every(
+      (p) => nodes.get(p)!.kind === "queue" || asyncSet.has(p),
+    );
+    if (allViaQueue) asyncSet.add(id);
+  }
+
   const metrics = new Map<string, NodeMetrics>();
   for (const sp of design.nodes) {
     const routingTax = taxOf.get(sp.id)!;
@@ -296,6 +319,7 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
         bottleneck: false,
         routingTax,
         quotaFactor,
+        async: false,
       });
       continue;
     }
@@ -312,6 +336,7 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
       bottleneck: utilization > 1,
       routingTax,
       quotaFactor,
+      async: asyncSet.has(sp.id),
     });
   }
   return metrics;
@@ -357,11 +382,17 @@ export function turnPathLatenciesMs(
     const spec = byId.get(id)!;
     memo.set(id, 0); // guard: a reachable node pointing into a cycle terminates
     // 114 — a hop whose endpoints declare DIFFERENT regions pays the RTT penalty.
-    const kids = childrenOf.get(id)!.map((kid) => {
-      const child = byId.get(kid)!;
-      const cross = spec.region && child.region && spec.region !== child.region;
-      return pathOf(kid) + (cross ? CROSS_REGION_LATENCY_MS : 0);
-    });
+    // 125 — an ASYNC child (drained off the request path behind a queue) is NOT
+    // awaited: its latency never reaches the user-facing turn. The queue's own
+    // enqueue latency still counts (the queue itself is synchronous).
+    const kids = childrenOf
+      .get(id)!
+      .filter((kid) => !metrics.get(kid)!.async)
+      .map((kid) => {
+        const child = byId.get(kid)!;
+        const cross = spec.region && child.region && spec.region !== child.region;
+        return pathOf(kid) + (cross ? CROSS_REGION_LATENCY_MS : 0);
+      });
     const downstream =
       kids.length === 0
         ? 0
@@ -404,7 +435,14 @@ export function heldInFlight(design: ArenaDesign, offeredLoad: number): Map<stri
     const cached = satMemo.get(id);
     if (cached !== undefined) return cached;
     satMemo.set(id, false); // cycle guard (cycle members are unreachable anyway)
-    const sat = metrics.get(id)!.bottleneck || childrenOf.get(id)!.some(satOf);
+    // 125 — an ASYNC child is not awaited synchronously (backlog, not held
+    // streams), so its saturation must NOT null this node's held figure.
+    const sat =
+      metrics.get(id)!.bottleneck ||
+      childrenOf
+        .get(id)!
+        .filter((kid) => !metrics.get(kid)!.async)
+        .some(satOf);
     satMemo.set(id, sat);
     return sat;
   };
