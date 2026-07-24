@@ -172,6 +172,22 @@ describe("backend connection wall (118 AC4)", () => {
     );
     expect(screen.queryByText(UI.en.arena.connectionWall)).toBeNull();
   });
+
+  // Regression: the long wall notice must WRAP inside the box, not balloon the
+  // node's width and overlap the neighbour to its right. The node caps its width.
+  it("caps the node width so the wall notice wraps instead of overlapping siblings", () => {
+    useArena.setState(wallDesign());
+    render(
+      <ReactFlowProvider>
+        <ArenaCanvas />
+      </ReactFlowProvider>,
+    );
+    const banner = screen.getByText(UI.en.arena.connectionWall);
+    const nodeRoot = banner.closest('[class*="min-w-"]');
+    expect(nodeRoot).toBeTruthy();
+    // A bounded width forces the long single-line notice to wrap within the box.
+    expect(nodeRoot!.className).toMatch(/max-w-/);
+  });
 });
 
 // --- 119/122-arena-example-callouts (side-panel list) -------------------------------

@@ -60,7 +60,7 @@ export function ArenaNode({ id, data, selected }: NodeProps) {
 
   return (
     <div
-      className="relative min-w-[150px] rounded-xl border bg-[var(--color-panel)] px-3 py-2 text-[var(--color-ink)] shadow-sm transition"
+      className="relative min-w-[150px] max-w-[240px] rounded-xl border bg-[var(--color-panel)] px-3 py-2 text-[var(--color-ink)] shadow-sm transition"
       data-highlighted={d.highlight ? id : undefined}
       style={{
         borderColor: hardBottleneck
