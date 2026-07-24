@@ -24,6 +24,8 @@ import { formatLatency, formatQps } from "./format";
 import { computeMetrics, endToEndLatencyMs, llmCost, rpsOf } from "./model";
 import { Palette } from "./Palette";
 import { useArena } from "./store";
+import { allTopicsFor } from "../learn/content";
+import { useLearnTarget } from "../lib/learnTarget";
 
 const THINK_TIMES = [10, 20, 30, 60, 120] as const;
 
@@ -255,6 +257,11 @@ export function ArenaPage() {
         >
           {t.arena.reset}
         </button>
+
+        {/* 121 — the loaded preset's concept chips: deep links into the Learn
+            topics it demonstrates. Vanish with the preset (exampleId clears on
+            any structural edit — the canvas no longer IS the example). */}
+        <ConceptChips exampleId={exampleId} />
       </div>
 
       {/* Palette + canvas. */}
@@ -272,6 +279,42 @@ export function ArenaPage() {
       >
         {t.arena.honesty}
       </div>
+    </div>
+  );
+}
+
+/**
+ * 121 — the loaded preset's concept chips. Each chip deep-links into the Learn
+ * topic it demonstrates (via the transient learnTarget store, same as the ℹ️
+ * "Learn more" links). Renders nothing when no preset is loaded or the preset
+ * declares no concepts. Exported for direct testing.
+ */
+export function ConceptChips({ exampleId }: { exampleId: string | null }) {
+  const t = useT();
+  const lang = useLang((s) => s.lang);
+  const ex = exampleId ? EXAMPLES.find((e) => e.id === exampleId) : undefined;
+  const concepts = ex?.concepts ?? [];
+  if (concepts.length === 0) return null;
+  const topics = allTopicsFor(lang);
+  const requestTopic = useLearnTarget.getState().requestTopic;
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[9.5px] uppercase tracking-wide text-[var(--color-muted)]">
+        {t.arena.concepts}
+      </span>
+      {concepts.map((id) => {
+        const topic = topics[id]?.topic;
+        if (!topic) return null; // AC1 test guards this — defensive
+        return (
+          <button
+            key={id}
+            onClick={() => requestTopic(id)}
+            className="rounded-full border border-[var(--color-line)] px-2 py-0.5 text-[10px] text-[var(--color-sky-soft)] transition hover:border-[var(--color-sky)] hover:bg-[color-mix(in_srgb,var(--color-sky)_12%,transparent)]"
+          >
+            {topic.title}
+          </button>
+        );
+      })}
     </div>
   );
 }

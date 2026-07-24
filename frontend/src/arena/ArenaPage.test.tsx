@@ -6,7 +6,7 @@
 // Arena's own canvas — the units under test are the App routing decision and the
 // ArenaPage chrome (palette, load control, honesty banner), not React Flow.
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./ArenaCanvas", () => ({ ArenaCanvas: () => <div>ARENA-CANVAS</div> }));
@@ -237,5 +237,54 @@ describe("the workload payload control (117 AC6)", () => {
     const input = screen.getByRole("slider", { name: UI.en.arena.payloadInput });
     fireEvent.change(input, { target: { value: "8000" } });
     expect(useArena.getState().callShape.inputTokens).toBe(8000);
+  });
+});
+
+// --- 121-arena-learn-links --------------------------------------------------------
+
+import { ConceptChips } from "./ArenaPage";
+import { allTopicsFor } from "../learn/content";
+import { useLearnTarget } from "../lib/learnTarget";
+
+describe("121 — preset concept chips (AC6)", () => {
+  beforeEach(() => useLearnTarget.setState({ pendingTopic: null }));
+
+  it("renders the loaded preset's concept chips with topic titles", () => {
+    // regional-quota declares concepts ["token-cost", "llm-gateway"].
+    render(<ConceptChips exampleId="regional-quota" />);
+    expect(screen.getByText(UI.en.arena.concepts)).toBeTruthy();
+    const topics = allTopicsFor("en");
+    expect(screen.getByText(topics["token-cost"].topic.title)).toBeTruthy();
+    expect(screen.getByText(topics["llm-gateway"].topic.title)).toBeTruthy();
+  });
+
+  it("clicking a chip requests that Learn topic", () => {
+    render(<ConceptChips exampleId="regional-quota" />);
+    fireEvent.click(screen.getByText(allTopicsFor("en")["token-cost"].topic.title));
+    expect(useLearnTarget.getState().pendingTopic).toBe("token-cost");
+  });
+
+  it("renders nothing when no preset is loaded or it has no concepts", () => {
+    const { container } = render(<ConceptChips exampleId={null} />);
+    expect(container.firstChild).toBeNull();
+    cleanup();
+    // simple-rag declares no concepts
+    const { container: c2 } = render(<ConceptChips exampleId="simple-rag" />);
+    expect(c2.firstChild).toBeNull();
+  });
+});
+
+describe("121 — requesting a topic navigates to Learn (AC4 navigate)", () => {
+  beforeEach(() => useLearnTarget.setState({ pendingTopic: null }));
+
+  it("flips the app to the Learn page when a topic is requested from the Arena", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
+    // on the Arena page (its stub renders) — not Learn yet
+    expect(screen.queryByText("LEARN-PAGE")).toBeNull();
+    act(() => {
+      useLearnTarget.getState().requestTopic("tokens");
+    });
+    expect(screen.getByText("LEARN-PAGE")).toBeTruthy();
   });
 });

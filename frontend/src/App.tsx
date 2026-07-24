@@ -46,6 +46,7 @@ import { useActiveModel } from "./lib/activeModel";
 import { useIsMobile } from "./lib/useIsMobile";
 import { markOnboarded, shouldAutoOnboard } from "./lib/onboarding";
 import type { Page } from "./lib/page";
+import { useLearnTarget } from "./lib/learnTarget";
 import { activePhase } from "./lib/phases";
 import { currentStep, isTouring } from "./lib/tour";
 import { SettingsPage } from "./settings/SettingsPage";
@@ -222,6 +223,14 @@ export default function App() {
       startTour();
     }
   }, [startTour]);
+
+  // 121-arena-learn-links — a "Learn more" link / concept chip in the Arena sets a
+  // pending topic; flip to the Learn page so LearnPage can consume + open it.
+  const pendingTopic = useLearnTarget((s) => s.pendingTopic);
+  useEffect(() => {
+    if (pendingTopic) setPage("learn");
+  }, [pendingTopic]);
+
   const banner = healthBanner(healthStatus, hasKey);
 
   // The canvas + its overlays, shared by the desktop (<main>) and the mobile

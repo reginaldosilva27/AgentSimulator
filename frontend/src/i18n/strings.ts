@@ -172,6 +172,10 @@ export interface Strings {
     backlogGrows: (n: string) => string;
     selectHint: string;
     remove: string;
+    // 121-arena-learn-links — the ℹ️ explainer's "learn more" row + the loaded
+    // preset's concept chips (both deep-link into the Learn page).
+    learnMore: string;
+    concepts: string;
     // 120-arena-annotations — the user's own free-text note on a node/edge.
     noteLabel: string;
     notePlaceholder: string;
@@ -1447,6 +1451,8 @@ const en: Strings = {
     backlogGrows: (n) => `backlog grows +${n}/s — enqueued, not dropped`,
     selectHint: "Select a component to scale it",
     remove: "Remove",
+    learnMore: "Learn more",
+    concepts: "Concepts in this example",
     noteLabel: "Note",
     notePlaceholder: "Why this choice?",
     noteClear: "Clear note",
@@ -2839,6 +2845,8 @@ const pt: Strings = {
     backlogGrows: (n) => `fila acumula +${n}/s — enfileirado, não descartado`,
     selectHint: "Selecione um componente para escalá-lo",
     remove: "Remover",
+    learnMore: "Saiba mais",
+    concepts: "Conceitos neste exemplo",
     noteLabel: "Nota",
     notePlaceholder: "Por que essa escolha?",
     noteClear: "Limpar nota",

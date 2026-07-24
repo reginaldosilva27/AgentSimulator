@@ -52,9 +52,12 @@ import {
 } from "./model";
 import { EXAMPLES } from "./examples";
 import { autoLayout, measuredSizeOf } from "./layout";
+import { learnTopicsFor } from "./learnLinks";
 import { fanoutNudges } from "./nudges";
 import { ARENA_DND_MIME } from "./Palette";
 import { NOTE_MAX, useArena } from "./store";
+import { allTopicsFor } from "../learn/content";
+import { useLearnTarget } from "../lib/learnTarget";
 
 const nodeTypes = { arena: ArenaNode };
 
@@ -469,9 +472,12 @@ export function ScalePanel({ id }: { id: string }) {
 
       {/* 104 — what this box is + what its knobs mean here. */}
       {showInfo && (
-        <p className="mt-1.5 rounded-lg bg-[var(--color-panel-2)] p-2 text-[10px] leading-snug text-[var(--color-text-soft)]">
-          {meta.info[lang]}
-        </p>
+        <div className="mt-1.5 rounded-lg bg-[var(--color-panel-2)] p-2 text-[10px] leading-snug text-[var(--color-text-soft)]">
+          <p>{meta.info[lang]}</p>
+          {/* 121 — deep links into the Learn topics this component's theory lives in
+              (a mapped kind only; CDN etc. render no row). */}
+          <LearnMoreRow kind={node.kind} />
+        </div>
       )}
 
       {scaling && (
@@ -680,6 +686,43 @@ export function ScalePanel({ id }: { id: string }) {
       {/* 120 — the user's own justification for this box (shown for every node,
           including the client, since any choice is worth a note). */}
       <NoteField key={id} value={node.note ?? ""} onCommit={(v) => setNodeNote(id, v)} />
+    </div>
+  );
+}
+
+/**
+ * 121 — the "Learn more" row inside a component's ℹ️ explainer: deep links to the
+ * Learn topics that explain this component's theory. Renders nothing for an
+ * unmapped kind (e.g. CDN) — no empty shell. Clicking a link asks the app to jump
+ * to the Learn page with that topic selected (via the transient learnTarget store).
+ */
+export function LearnMoreRow({ kind }: { kind: ArenaKind }) {
+  const t = useT();
+  const lang = useLang((s) => s.lang);
+  const topicIds = learnTopicsFor(kind);
+  if (topicIds.length === 0) return null;
+  const topics = allTopicsFor(lang);
+  const requestTopic = useLearnTarget.getState().requestTopic;
+  return (
+    <div className="mt-1.5 border-t border-[var(--color-line)] pt-1.5">
+      <span className="text-[9px] uppercase tracking-wide text-[var(--color-muted)]">
+        {t.arena.learnMore}
+      </span>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {topicIds.map((id) => {
+          const topic = topics[id]?.topic;
+          if (!topic) return null; // guarded by the AC1 test — defensive
+          return (
+            <button
+              key={id}
+              onClick={() => requestTopic(id)}
+              className="rounded border border-[var(--color-line)] px-1.5 py-0.5 text-[9.5px] text-[var(--color-sky-soft)] transition hover:border-[var(--color-sky)] hover:bg-[color-mix(in_srgb,var(--color-sky)_12%,transparent)]"
+            >
+              {topic.title}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -32,6 +32,9 @@ export interface ArenaExample {
    *  (≥2 per preset, one per node max; texts state MECHANISMS, not pinned
    *  figures, so future recalibrations don't stale them). */
   callouts: Array<{ nodeId: string; text: Record<Lang, string> }>;
+  /** 121 — the Learn-topic ids this preset demonstrates, rendered as deep-link
+   *  concept chips while it's loaded. Ids are validated by learnLinks.test.ts. */
+  concepts?: readonly string[];
   build: () => Pick<ArenaState, "nodes" | "edges" | "users" | "thinkTimeSec">;
 }
 
@@ -250,6 +253,7 @@ const RAW_EXAMPLES: ArenaExample[] = [
   },
   {
     id: "semantic-cache",
+    concepts: ["semantic-cache", "token-cost"],
     claims: { demandRps: 420, llm: "healthy" },
     title: { en: "Semantic cache shields the fleet", pt: "Cache semântico protege a frota" },
     description: {
@@ -423,6 +427,7 @@ const RAW_EXAMPLES: ArenaExample[] = [
     // DECOUPLING (async ingestion drains off the request path, so the worker's
     // heavy service time never reaches the user).
     id: "guardrails-async",
+    concepts: ["guardrails", "event-driven"],
     claims: { demandRps: 200, llm: "healthy" },
     title: { en: "Guardrails + async ingestion", pt: "Guardrails + ingestão assíncrona" },
     description: {
@@ -484,6 +489,7 @@ const RAW_EXAMPLES: ArenaExample[] = [
     // the regional quota (subscription-level, not per-deployment) — provisioned
     // 4,800 calls/s of raw capacity, capped at 3,000, shedding under 3,200.
     id: "regional-quota",
+    concepts: ["token-cost", "llm-gateway"],
     claims: { demandRps: 1600, llm: "critical" },
     title: { en: "Regional quota bites", pt: "A cota regional aperta" },
     description: {
@@ -532,6 +538,7 @@ const RAW_EXAMPLES: ArenaExample[] = [
     // 116 AC5 — part 2: the SAME 8 deployments, same demand — moving one pool to
     // us-west gives each pool its own regional quota and the shedding stops.
     id: "multi-region",
+    concepts: ["stateless-scaling", "token-cost"],
     claims: { demandRps: 1600, llm: "healthy" },
     title: { en: "Escape across regions", pt: "Escapar por regiões" },
     description: {

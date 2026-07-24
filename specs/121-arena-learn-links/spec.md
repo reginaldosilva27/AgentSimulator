@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **ID** | 121-arena-learn-links |
-| **Status** | planned |
+| **Status** | done |
 | **Author** | Reginaldo Silva (+ Claude) |
 | **Date** | 2026-07-23 |
 

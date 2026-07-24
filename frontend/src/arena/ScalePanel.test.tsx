@@ -184,3 +184,45 @@ describe("node/edge note fields (120)", () => {
     );
   });
 });
+
+// --- 121-arena-learn-links --------------------------------------------------------
+
+import { allTopicsFor } from "../learn/content";
+import { learnTopicsFor } from "./learnLinks";
+import { useLearnTarget } from "../lib/learnTarget";
+
+describe("121 — the ℹ️ explainer's Learn-more links", () => {
+  it("renders titled Learn links for a mapped kind, after opening the explainer (AC2)", () => {
+    render(<ScalePanel id="llm-1" />);
+    // hidden until the ℹ️ toggle is opened
+    expect(screen.queryByText(UI.en.arena.learnMore)).toBeNull();
+    fireEvent.click(screen.getByLabelText(UI.en.arena.infoLabel));
+    expect(screen.getByText(UI.en.arena.learnMore)).toBeTruthy();
+    // each mapped topic's TITLE renders as a link
+    const topics = allTopicsFor("en");
+    for (const id of learnTopicsFor("llm")) {
+      expect(screen.getByText(topics[id].topic.title), `link "${id}"`).toBeTruthy();
+    }
+  });
+
+  it("clicking a Learn link requests that topic (AC4 half — the intent)", () => {
+    useLearnTarget.setState({ pendingTopic: null });
+    render(<ScalePanel id="llm-1" />);
+    fireEvent.click(screen.getByLabelText(UI.en.arena.infoLabel));
+    const first = learnTopicsFor("llm")[0];
+    const title = allTopicsFor("en")[first].topic.title;
+    fireEvent.click(screen.getByText(title));
+    expect(useLearnTarget.getState().pendingTopic).toBe(first);
+  });
+
+  it("renders NO Learn-more row for an unmapped kind (CDN) — no empty shell (AC3)", () => {
+    useArena.setState({
+      nodes: [{ id: "cdn-1", kind: "cdn", size: "medium", replicas: 1, x: 0, y: 0 }],
+      edges: [],
+    });
+    render(<ScalePanel id="cdn-1" />);
+    fireEvent.click(screen.getByLabelText(UI.en.arena.infoLabel));
+    expect(screen.queryByText(UI.en.arena.learnMore)).toBeNull();
+    expect(learnTopicsFor("cdn")).toEqual([]);
+  });
+});
