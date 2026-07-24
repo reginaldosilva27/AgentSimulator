@@ -129,8 +129,8 @@ const RAW_EXAMPLES: ArenaExample[] = [
       {
         nodeId: "backend",
         text: {
-          en: "2 containers, and NOT for CPU: every user holds a connection/SSE stream open for the whole multi-second turn — held streams size an agent backend.",
-          pt: "2 containers, e NÃO por CPU: cada usuário segura uma conexão/stream SSE aberta o turno inteiro de vários segundos — streams seguradas dimensionam um backend de agente.",
+          en: "Many containers, and NOT for CPU: every user holds a connection/SSE stream open for the whole multi-second turn — held streams size an agent backend.",
+          pt: "Muitos containers, e NÃO por CPU: cada usuário segura uma conexão/stream SSE aberta o turno inteiro de vários segundos — streams seguradas dimensionam um backend de agente.",
         },
       },
     ],
@@ -139,9 +139,9 @@ const RAW_EXAMPLES: ArenaExample[] = [
       thinkTimeSec: 20,
       nodes: [
         node("client", "client", 0, ROW),
-        // 118 — 2 containers: at ~675 req/s of ~3.7s turns the backend HOLDS
-        // ~2.5k streams — the connection budget, not CPU, sizes it.
-        node("backend", "backend", COL, ROW, { replicas: 2 }),
+        // 118/127 — with realistic ~15s turns the backend HOLDS ~6.8k streams at
+        // equilibrium, so it needs ~6 containers: the connection budget, not CPU, sizes it.
+        node("backend", "backend", COL, ROW, { replicas: 6 }),
         node("llm", "llm", COL * 2, 0, { callsPerRequest: 2, size: "xlarge", replicas: 4 }),
         node("vectorDb", "vectorDb", COL * 2, ROW * 2),
       ],
@@ -185,7 +185,7 @@ const RAW_EXAMPLES: ArenaExample[] = [
       nodes: [
         node("client", "client", 0, ROW),
         node("apigw", "apiGateway", COL, ROW),
-        node("backend", "backend", COL * 2, ROW),
+        node("backend", "backend", COL * 2, ROW, { replicas: 2 }),
         node("llm", "llm", COL * 3, 0, { callsPerRequest: 2, replicas: 4 }),
         node("cache", "cache", COL * 3, ROW * 2, { hitRatio: DEFAULT_HIT_RATIO }),
         node("vectorDb", "vectorDb", COL * 4, ROW * 2),
@@ -277,7 +277,7 @@ const RAW_EXAMPLES: ArenaExample[] = [
       thinkTimeSec: 20,
       nodes: [
         node("client", "client", 0, ROW),
-        node("backend", "backend", COL, ROW),
+        node("backend", "backend", COL, ROW, { replicas: 3 }),
         // The third lever (112): hits skip the model entirely; only misses go on.
         node("semcache", "semanticCache", COL * 2, 0, { hitRatio: 0.3 }),
         node("llm", "llm", COL * 3, 0, { callsPerRequest: 2, replicas: 6 }),
@@ -329,7 +329,7 @@ const RAW_EXAMPLES: ArenaExample[] = [
         node("client", "client", 0, ROW),
         node("apigw", "apiGateway", COL, ROW),
         node("lb", "loadBalancer", COL * 2, ROW),
-        node("backend", "backend", COL * 3, ROW, { replicas: 2 }),
+        node("backend", "backend", COL * 3, ROW, { replicas: 5 }),
         node("aigw", "aiGateway", COL * 4, ROW * 0.4, { callsPerRequest: 2 }),
         // Two POOLS in different US regions (106/116) — the split is resilience/
         // latency intent, which the gateway routes across.
@@ -376,8 +376,8 @@ const RAW_EXAMPLES: ArenaExample[] = [
       {
         nodeId: "backend",
         text: {
-          en: "6 containers at single-digit CPU: thousands of held SSE streams (In-flight row) — memory and connections, not CPU, size agent backends.",
-          pt: "6 containers com CPU de um dígito: milhares de streams SSE seguradas (linha In-flight) — memória e conexões, não CPU, dimensionam backends de agente.",
+          en: "Many containers at single-digit CPU: tens of thousands of held SSE streams (In-flight row) — memory and connections, not CPU, size agent backends.",
+          pt: "Muitos containers com CPU de um dígito: dezenas de milhares de streams SSE seguradas (linha In-flight) — memória e conexões, não CPU, dimensionam backends de agente.",
         },
       },
       {
@@ -393,9 +393,9 @@ const RAW_EXAMPLES: ArenaExample[] = [
       thinkTimeSec: 60,
       nodes: [
         node("client", "client", 0, ROW * 1.5),
-        // 118 — 6 containers at ~5% CPU: held streams (~7.4k across ~4.8s
+        // 118/127 — ~20 containers at ~5% CPU: held streams (~24k across ~19s
         // turns), not QPS, size an agent backend.
-        node("backend", "backend", COL, ROW * 1.5, { replicas: 6 }),
+        node("backend", "backend", COL, ROW * 1.5, { replicas: 20 }),
         node("aigw", "aiGateway", COL * 2, ROW * 1.5, { callsPerRequest: 2 }),
         // Four POOLS across four US regions (106/116) — the fleet the gateway routes.
         node("llm1", "llm", COL * 3, 0, { size: "xlarge", replicas: 2, region: "us-east" }),
@@ -511,9 +511,10 @@ const RAW_EXAMPLES: ArenaExample[] = [
       thinkTimeSec: 20,
       nodes: [
         node("client", "client", 0, ROW),
-        // 118 — 4 containers (same as the multi-region twin: the ONLY move
-        // between the pair is the region split).
-        node("backend", "backend", COL, ROW, { replicas: 4 }),
+        // 118/127 — matches the multi-region twin's backend (12): the ONLY move
+        // between the pair is the region split. (It sheds, so its held is null and
+        // the 118 budget test skips it — the count is kept equal for the narrative.)
+        node("backend", "backend", COL, ROW, { replicas: 12 }),
         node("aigw", "aiGateway", COL * 2, ROW, { callsPerRequest: 2 }),
         // Same subscription, same region — the quota pool is shared.
         node("llm1", "llm", COL * 3, ROW * 0.3, { size: "xlarge", replicas: 4 }),
@@ -558,8 +559,8 @@ const RAW_EXAMPLES: ArenaExample[] = [
       thinkTimeSec: 20,
       nodes: [
         node("client", "client", 0, ROW),
-        // 118 — ~1.3k req/s of ~4s turns ≈ 5.2k held streams → 4 containers.
-        node("backend", "backend", COL, ROW, { replicas: 4 }),
+        // 118/127 — ~0.9k req/s of ~15s turns ≈ 13.6k held streams → 12 containers.
+        node("backend", "backend", COL, ROW, { replicas: 12 }),
         node("aigw", "aiGateway", COL * 2, ROW, { callsPerRequest: 2 }),
         node("llm1", "llm", COL * 3, ROW * 0.3, { size: "xlarge", replicas: 4 }),
         node("llm2", "llm", COL * 3, ROW * 1.7, { size: "xlarge", replicas: 4, region: "us-west" }),

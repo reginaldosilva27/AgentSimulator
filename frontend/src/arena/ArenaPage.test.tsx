@@ -108,16 +108,39 @@ describe("Arena honesty banner (AC10)", () => {
 });
 
 describe("saturation honesty in the control bar (108 AC1/AC2/AC4)", () => {
-  it("replaces the latency readout with the shed notice on the first-visit sample (saturated)", () => {
-    // The default sample (simple-rag) saturates the LLM — the header must tell
-    // the shed story, never the 0.99-clamped fictional latency (e.g. "80s").
-    useArena.getState().loadExample("simple-rag");
+  it("shows the shed notice (not a latency) when a design actually sheds at its load", () => {
+    // 108's rule stands: past capacity a real API sheds 429s and a queue-latency
+    // figure would be fiction, so the header tells the shed story. 127 — a single
+    // tiny deployment under a huge closed population still overwhelms even the
+    // self-throttled rate, so it sheds at equilibrium.
+    useArena.getState().loadDesign({
+      nodes: [anode("client", "client"), anode("be", "backend", 200), anode("llm", "llm", 400)],
+      edges: [
+        { id: "client-be", source: "client", target: "be" },
+        { id: "be-llm", source: "be", target: "llm" },
+      ],
+      users: 100_000,
+      thinkTimeSec: 5,
+    });
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
 
     expect(screen.getByText(/Saturated — shedding/)).toBeTruthy();
     // The latency readout (identified by its hint tooltip) is not rendered.
     expect(screen.queryByTitle(UI.en.arena.e2eLatencyHint)).toBeNull();
+  });
+
+  it("the first-visit sample self-throttles instead of shedding — shows its honest latency (127)", () => {
+    // 127 — with realistic ~4.5s model calls a closed population self-throttles a
+    // single-LLM design to ~96% util WITHOUT shedding (users wait rather than get
+    // dropped), so the header shows the (large, honest) end-to-end latency, not a
+    // shed notice. The near-saturation cost is legible as a big latency number.
+    useArena.getState().loadExample("simple-rag");
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(UI.en.arena.nav, "i") }));
+
+    expect(screen.queryByText(/Saturated — shedding/)).toBeNull();
+    expect(screen.queryByTitle(UI.en.arena.e2eLatencyHint)).not.toBeNull();
   });
 
   it("shows the latency readout (and no notice) for a healthy design", () => {

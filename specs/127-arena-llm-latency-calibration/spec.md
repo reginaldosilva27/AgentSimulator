@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **ID** | 127-arena-llm-latency-calibration |
-| **Status** | planned |
+| **Status** | done |
 | **Author** | Reginaldo Silva |
 | **Date** | 2026-07-24 |
 
@@ -104,7 +104,10 @@ connections open, so backends scale on streams long before CPU.
 
 ## Out of scope / deferred
 
-- Per-model latency + an Arena model selector (own spec).
+- Per-model latency + an Arena model selector (own spec). → **Followed up by
+  128-arena-model-tier**, which adds a per-node model-tier knob (nano/mini/
+  standard/large) that scales this spec's mini anchor: nano faster, standard/large
+  slower. This spec's 4.5 s figure is the `mini` anchor 128 multiplies from.
 - Prefill-rate realism (big-context slowdown) — left as a future refinement.
 - Streaming-vs-total nuance (the held-stream model already treats the full
   generate time as the hold, which is what matters for connections).
