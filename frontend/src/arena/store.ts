@@ -13,13 +13,16 @@ import {
   CALL_SHAPE_BOUNDS,
   DEFAULT_CALL_SHAPE,
   DEFAULT_CPR,
+  DEFAULT_MODEL_TIER,
   defaultHitRatioFor,
   INSTANCE_SIZES,
   isCacheLike,
+  MODEL_TIERS,
   type ArenaKind,
   type ArenaRegion,
   type CallShape,
   type InstanceSize,
+  type ModelTier,
 } from "./components";
 import { EXAMPLES, defaultDesign } from "./examples";
 import { equilibriumRps, type ArenaEdge, type ArenaNodeSpec } from "./model";
@@ -58,6 +61,14 @@ function withSanitizedNote<T extends { note?: string }>(el: T): T {
   return { ...el, note };
 }
 
+/** 128 — an invalid or foreign `modelTier` is dropped, so it resolves to the
+ *  `mini` anchor at read time (never reaches MODEL_TIER_PROFILE as undefined). */
+function withSanitizedModelTier(n: ArenaNode): ArenaNode {
+  if (n.modelTier === undefined || isModelTier(n.modelTier)) return n;
+  const { modelTier: _drop, ...rest } = n;
+  return rest;
+}
+
 export interface ArenaState {
   nodes: ArenaNode[];
   edges: ArenaEdge[];
@@ -85,6 +96,11 @@ const DEFAULT_LOAD = DEFAULT_USERS / DEFAULT_THINK_SEC;
 
 function isSize(v: unknown): v is InstanceSize {
   return typeof v === "string" && (INSTANCE_SIZES as readonly string[]).includes(v);
+}
+
+/** 128 — a valid model tier (setter guard + persisted-blob sanitation). */
+function isModelTier(v: unknown): v is ModelTier {
+  return typeof v === "string" && (MODEL_TIERS as readonly string[]).includes(v);
 }
 
 /** 117 — clamp one call-shape axis to its slider bounds. */
@@ -130,7 +146,9 @@ export function loadArena(): ArenaState {
                   !!n && typeof n.id === "string" && typeof n.kind === "string" && isSize(n.size),
               )
             : []
-        ).map(withSanitizedNote); // 120 — drop bad notes, cap over-long ones
+        )
+          .map(withSanitizedNote) // 120 — drop bad notes, cap over-long ones
+          .map(withSanitizedModelTier); // 128 — drop an invalid/foreign modelTier
         const ids = new Set(nodes.map((n) => n.id));
         const edges = (
           Array.isArray(parsed.edges)
@@ -231,6 +249,8 @@ interface ArenaStore extends ArenaState {
   connect: (source: string, target: string) => void;
   removeEdge: (id: string) => void;
   setSize: (id: string, size: InstanceSize) => void;
+  /** 128 — LLM only: which model SKU runs here (latency + cost; invalid ignored). */
+  setModelTier: (id: string, tier: ModelTier) => void;
   setReplicas: (id: string, replicas: number) => void;
   setHitRatio: (id: string, hitRatio: number) => void;
   setOfferedLoad: (offeredLoad: number) => void;
@@ -331,6 +351,8 @@ export const useArena = create<ArenaStore>((set, get) => {
         // 116 — infrastructure defaults to East US; the client is the users,
         // not a deployable box, so it carries no region.
         ...(kind === "client" ? {} : { region: DEFAULT_REGION }),
+        // 128 — an LLM deployment defaults to the `mini` model tier (the anchor).
+        ...(kind === "llm" ? { modelTier: DEFAULT_MODEL_TIER } : {}),
       };
       saveStruct({ nodes: [...get().nodes, node] });
       return id;
@@ -375,6 +397,13 @@ export const useArena = create<ArenaStore>((set, get) => {
 
     setSize: (id, size) =>
       saveStruct({ nodes: get().nodes.map((n) => (n.id === id ? { ...n, size } : n)) }),
+
+    setModelTier: (id, tier) => {
+      if (!isModelTier(tier)) return;
+      saveStruct({
+        nodes: get().nodes.map((n) => (n.id === id && n.kind === "llm" ? { ...n, modelTier: tier } : n)),
+      });
+    },
 
     setReplicas: (id, replicas) =>
       saveStruct({

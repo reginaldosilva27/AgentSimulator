@@ -29,10 +29,14 @@ import { ArenaNode, type ArenaNodeData } from "./ArenaNode";
 import {
   ARENA_REGIONS,
   CALLS_CONFIGURABLE,
+  DEFAULT_MODEL_TIER,
   INSTANCE_SIZES,
   KIND_META,
+  MODEL_TIER_SKU,
+  MODEL_TIERS,
   type ArenaKind,
   type InstanceSize,
+  type ModelTier,
 } from "./components";
 import { formatQps } from "./format";
 import {
@@ -411,8 +415,16 @@ export function ScalePanel({ id }: { id: string }) {
   const edges = useArena((s) => s.edges);
   const offeredLoad = useArena((s) => s.offeredLoad);
   const callShape = useArena((s) => s.callShape);
-  const { setSize, setReplicas, setHitRatio, setCallsPerRequest, setRegion, setNodeNote, removeNode } =
-    useArena.getState();
+  const {
+    setSize,
+    setModelTier,
+    setReplicas,
+    setHitRatio,
+    setCallsPerRequest,
+    setRegion,
+    setNodeNote,
+    removeNode,
+  } = useArena.getState();
   if (!node) return null;
   const design = { nodes, edges, callShape };
   const meta = KIND_META[node.kind];
@@ -561,6 +573,45 @@ export function ScalePanel({ id }: { id: string }) {
               </option>
             ))}
           </select>
+
+          {/* 128 — the model tier (LLM only): which SKU runs here. Orthogonal to
+              the instance size above (that's the quota/PTU capacity) — this trades
+              per-call latency + cost, and (honestly) NOT answer quality. */}
+          {node.kind === "llm" && (
+            <>
+              <label
+                className="mt-2.5 block text-[10px] text-[var(--color-text-soft)]"
+                title={t.arena.modelTierHint}
+              >
+                {t.arena.modelTier}
+              </label>
+              <div className="mt-1 grid grid-cols-4 gap-1">
+                {MODEL_TIERS.map((tier: ModelTier) => (
+                  <button
+                    key={tier}
+                    onClick={() => setModelTier(id, tier)}
+                    title={MODEL_TIER_SKU[tier]}
+                    className="flex flex-col items-center rounded border px-1 py-1 leading-tight transition"
+                    style={{
+                      borderColor:
+                        (node.modelTier ?? DEFAULT_MODEL_TIER) === tier
+                          ? "var(--color-sky)"
+                          : "var(--color-line)",
+                      color:
+                        (node.modelTier ?? DEFAULT_MODEL_TIER) === tier
+                          ? "var(--color-sky-soft)"
+                          : "var(--color-text-soft)",
+                    }}
+                  >
+                    <span className="text-[9.5px]">{t.arena.modelTiers[tier]}</span>
+                    <span className="font-mono text-[7.5px] text-[var(--color-muted)]">
+                      {MODEL_TIER_SKU[tier]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           {/* Horizontal scale, in the kind's own unit (deployments/containers/…). */}
           <label className="mt-2.5 block text-[10px] text-[var(--color-text-soft)]">

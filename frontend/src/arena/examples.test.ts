@@ -291,3 +291,37 @@ describe("node-anchored callouts on every preset (119 AC1)", () => {
     }
   });
 });
+
+// --- 128-arena-model-tier ------------------------------------------------------------
+
+describe("128 AC2 — presets are byte-for-byte unchanged (they default to the mini tier)", () => {
+  it("no preset node carries a modelTier — the mini anchor is implicit", () => {
+    for (const ex of EXAMPLES) {
+      for (const nd of ex.build().nodes) {
+        expect(nd.modelTier, `${ex.id}/${nd.id}`).toBeUndefined();
+      }
+    }
+  });
+
+  it("forcing every LLM node to explicit mini leaves all metrics identical", () => {
+    for (const ex of EXAMPLES) {
+      const d = ex.build();
+      const rps = loadOf(d);
+      const base = computeMetrics(d, rps);
+      const forced = {
+        ...d,
+        nodes: d.nodes.map((nd) =>
+          nd.kind === "llm" ? { ...nd, modelTier: "mini" as const } : nd,
+        ),
+      };
+      const withMini = computeMetrics(forced, rps);
+      for (const nd of d.nodes) {
+        const a = base.get(nd.id)!;
+        const b = withMini.get(nd.id)!;
+        expect(b.latencyMs, `${ex.id}/${nd.id} latency`).toBe(a.latencyMs);
+        expect(b.capacity, `${ex.id}/${nd.id} capacity`).toBe(a.capacity);
+        expect(b.throughput, `${ex.id}/${nd.id} throughput`).toBe(a.throughput);
+      }
+    }
+  });
+});

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { UI } from "../i18n/strings";
 import { ArenaCanvas, edgeIdsToRemove, edgeLabelFor } from "./ArenaCanvas";
-import { BENCHMARKS } from "./components";
+import { BENCHMARKS, MODEL_TIER_SKU } from "./components";
 import { EXAMPLES } from "./examples";
 import { useArena } from "./store";
 
@@ -333,5 +333,64 @@ describe("annotation markers on the canvas (120 AC3)", () => {
   it("projects a 📝 label onto an annotated edge only (AC3)", () => {
     expect(edgeLabelFor({ note: "fallback pool in us-west" })).toBe("📝");
     expect(edgeLabelFor({})).toBeUndefined();
+  });
+});
+
+// --- 128-arena-model-tier ------------------------------------------------------------
+
+describe("LLM model-tier control (128 AC6, AC7)", () => {
+  const seedHealthy = () =>
+    useArena.setState({
+      // Low load so the LLM is NOT the bottleneck and shows a real Latency readout.
+      nodes: [
+        { id: "backend-1", kind: "backend", size: "medium", replicas: 1, x: 0, y: 0 },
+        { id: "llm-2", kind: "llm", size: "medium", replicas: 1, x: 220, y: 0, modelTier: "mini" },
+      ],
+      edges: [{ id: "backend-1-llm-2", source: "backend-1", target: "llm-2" }],
+      offeredLoad: 10,
+      selectedId: "llm-2",
+      selectedEdgeId: null,
+    });
+
+  it("AC6 — renders the Model tier control on an LLM node with all four real SKUs", () => {
+    seedHealthy();
+    render(
+      <ReactFlowProvider>
+        <ArenaCanvas />
+      </ReactFlowProvider>,
+    );
+    expect(screen.getByText(UI.en.arena.modelTier)).toBeTruthy();
+    for (const sku of Object.values(MODEL_TIER_SKU)) {
+      expect(screen.getByTitle(sku)).toBeTruthy();
+    }
+    // The hint (with the "NOT answer quality" honesty note) is wired as the label title.
+    expect(screen.getByTitle(UI.en.arena.modelTierHint)).toBeTruthy();
+  });
+
+  it("AC6 — a non-LLM node's panel has no Model tier control", () => {
+    seedHealthy();
+    useArena.setState({ selectedId: "backend-1" });
+    render(
+      <ReactFlowProvider>
+        <ArenaCanvas />
+      </ReactFlowProvider>,
+    );
+    expect(screen.queryByText(UI.en.arena.modelTier)).toBeNull();
+  });
+
+  it("AC7 — picking a bigger tier updates the store and the node's live latency readout", () => {
+    seedHealthy();
+    const { container } = render(
+      <ReactFlowProvider>
+        <ArenaCanvas />
+      </ReactFlowProvider>,
+    );
+    const box = () => container.querySelector('[data-id="llm-2"]')!.textContent ?? "";
+    const before = box();
+    fireEvent.click(screen.getByTitle(MODEL_TIER_SKU.large));
+    // The wire: store carries the new tier...
+    expect(useArena.getState().nodes.find((n) => n.id === "llm-2")!.modelTier).toBe("large");
+    // ...and the projection re-renders — a bigger model is slower, so the readout moved.
+    expect(box()).not.toBe(before);
   });
 });

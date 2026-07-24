@@ -15,11 +15,20 @@ import {
   DEFAULT_SEMANTIC_HIT_RATIO,
   isCacheLike,
   KIND_META,
+  DEFAULT_MODEL_TIER,
   LLM_COST_PER_CALL_USD,
   LLM_COST_PER_DEPLOYMENT_HOUR_USD,
+  LLM_DECODE_MS_PER_TOKEN,
+  LLM_INPUT_USD_PER_MTOK,
+  LLM_OUTPUT_USD_PER_MTOK,
+  LLM_PREFILL_MS_PER_TOKEN,
+  LLM_TTFT_MS,
   llmBaseCapacityFor,
   llmBaseLatencyMsFor,
   llmCostPerCallUsd,
+  MODEL_TIER_PROFILE,
+  MODEL_TIER_SKU,
+  MODEL_TIERS,
   REGIONAL_LLM_QUOTA_RPS,
   regionalLlmQuotaRpsFor,
   splitsLoad,
@@ -92,9 +101,9 @@ describe("OpenAI-anchored LLM calibration (116 AC1)", () => {
   it("one medium deployment is a quota-tier block worth hundreds of calls/s", () => {
     // Anchor: Azure OpenAI Global Standard quota for gpt-4.1-mini, per region —
     // Tier 1 ≈ 33 calls/s … Tier 5 ≈ 1,000 calls/s at ~2.5k tokens/call. Medium
-    // sits in the Tier 2–3 band; latency stays the blended per-call service time.
+    // sits in the Tier 2–3 band. Capacity is quota-driven; latency is calibrated
+    // separately (127) to a realistic OpenAI decode rate.
     expect(BENCHMARKS.llm.baseCapacity).toBe(150);
-    expect(BENCHMARKS.llm.baseLatencyMs).toBe(800);
   });
 
   it("the regional quota is ~2× the top published per-region tier (increase territory)", () => {
@@ -135,7 +144,7 @@ describe("LLM call shape drives capacity, latency, cost and quota (117 AC1–AC3
   it("reproduces the 116 anchors exactly at the default shape (2k in + 500 out)", () => {
     expect(DEFAULT_CALL_SHAPE).toEqual({ inputTokens: 2000, outputTokens: 500 });
     expect(llmBaseCapacityFor(DEFAULT_CALL_SHAPE)).toBe(BENCHMARKS.llm.baseCapacity); // 150
-    expect(llmBaseLatencyMsFor(DEFAULT_CALL_SHAPE)).toBe(BENCHMARKS.llm.baseLatencyMs); // 800
+    expect(llmBaseLatencyMsFor(DEFAULT_CALL_SHAPE)).toBe(BENCHMARKS.llm.baseLatencyMs); // 127: 4500
     expect(llmCostPerCallUsd(DEFAULT_CALL_SHAPE)).toBeCloseTo(LLM_COST_PER_CALL_USD, 6); // $0.0016
     expect(regionalLlmQuotaRpsFor(DEFAULT_CALL_SHAPE)).toBe(REGIONAL_LLM_QUOTA_RPS); // 3000
   });
@@ -307,5 +316,71 @@ describe("126 — filterPalette narrows by label/description (AC3)", () => {
   it("returns all groups for an empty query", () => {
     expect(filterPalette(PALETTE_GROUPS, "", "en")).toEqual(PALETTE_GROUPS);
     expect(filterPalette(PALETTE_GROUPS, "   ", "en")).toEqual(PALETTE_GROUPS);
+  });
+});
+
+// --- 127-arena-llm-latency-calibration --------------------------------------------
+
+describe("127 — realistic OpenAI decode latency (AC1, AC2)", () => {
+  it("a default agent call lands in the OpenAI-defensible 3–7 s band, not 0.8 s", () => {
+    const ms = llmBaseLatencyMsFor(DEFAULT_CALL_SHAPE);
+    expect(ms).toBeGreaterThanOrEqual(3000);
+    expect(ms).toBeLessThanOrEqual(7000);
+    // 117 parity: the pinned benchmark equals the shape-derived figure.
+    expect(BENCHMARKS.llm.baseLatencyMs).toBe(ms);
+  });
+
+  it("decode corresponds to a realistic 60–150 tok/s and dominates the call", () => {
+    const tokPerSec = 1000 / LLM_DECODE_MS_PER_TOKEN;
+    expect(tokPerSec).toBeGreaterThanOrEqual(60);
+    expect(tokPerSec).toBeLessThanOrEqual(150);
+    // decode term (output × slope) is the largest component of the default call.
+    const decode = DEFAULT_CALL_SHAPE.outputTokens * LLM_DECODE_MS_PER_TOKEN;
+    const prefill = DEFAULT_CALL_SHAPE.inputTokens * LLM_PREFILL_MS_PER_TOKEN;
+    expect(decode).toBeGreaterThan(prefill + LLM_TTFT_MS);
+  });
+});
+
+// --- 128-arena-model-tier ---------------------------------------------------------
+
+describe("128 — model tier trades latency + cost, mini is the anchor", () => {
+  const SHAPE = DEFAULT_CALL_SHAPE;
+
+  it("AC2 — the mini profile equals the pre-128 gpt-4.1-mini constants", () => {
+    const mini = MODEL_TIER_PROFILE.mini;
+    expect(mini.ttftMs).toBe(LLM_TTFT_MS);
+    expect(mini.prefillMsPerTok).toBe(LLM_PREFILL_MS_PER_TOKEN);
+    expect(mini.decodeMsPerTok).toBe(LLM_DECODE_MS_PER_TOKEN);
+    expect(mini.inputUsdPerMtok).toBe(LLM_INPUT_USD_PER_MTOK);
+    expect(mini.outputUsdPerMtok).toBe(LLM_OUTPUT_USD_PER_MTOK);
+  });
+
+  it("AC2 — default tier is mini and reproduces today's figures byte-for-byte", () => {
+    expect(DEFAULT_MODEL_TIER).toBe("mini");
+    // no-arg call === explicit mini === the pinned anchors.
+    expect(llmBaseLatencyMsFor(SHAPE)).toBe(llmBaseLatencyMsFor(SHAPE, "mini"));
+    expect(llmCostPerCallUsd(SHAPE)).toBe(llmCostPerCallUsd(SHAPE, "mini"));
+    expect(llmBaseLatencyMsFor(SHAPE, "mini")).toBe(BENCHMARKS.llm.baseLatencyMs);
+    expect(llmCostPerCallUsd(SHAPE, "mini")).toBe(LLM_COST_PER_CALL_USD);
+  });
+
+  it("AC3 — per-call latency is strictly increasing nano < mini < standard < large", () => {
+    const lat = MODEL_TIERS.map((t) => llmBaseLatencyMsFor(SHAPE, t));
+    for (let i = 1; i < lat.length; i++) expect(lat[i]).toBeGreaterThan(lat[i - 1]);
+  });
+
+  it("AC4 — per-call cost is strictly increasing nano < mini < standard < large", () => {
+    const cost = MODEL_TIERS.map((t) => llmCostPerCallUsd(SHAPE, t));
+    for (let i = 1; i < cost.length; i++) expect(cost[i]).toBeGreaterThan(cost[i - 1]);
+  });
+
+  it("AC8 — every tier maps to a real OpenAI SKU, none stating a parameter count", () => {
+    for (const t of MODEL_TIERS) {
+      const sku = MODEL_TIER_SKU[t];
+      expect(sku).toMatch(/^gpt-/);
+      // §3 honesty — no invented "7B"/"70 billion" parameter sizing anywhere.
+      expect(sku).not.toMatch(/\d+\s*[bB]\b/);
+      expect(sku.toLowerCase()).not.toContain("billion");
+    }
   });
 });

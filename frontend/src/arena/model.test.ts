@@ -301,7 +301,10 @@ describe("closed-loop equilibrium (110 AC1–AC3, AC5)", () => {
   // The audited scenario (rescaled by 116's calibration): 122,300 users ·
   // think 20s · 3 LLM pools (large ×5 = 4,500 calls/s total) behind an AI
   // Gateway — open-loop the demand (6,115 rps) reads 136%, dropping; a closed
-  // population self-throttles to ~4,100 rps instead of shedding.
+  // population self-throttles instead of shedding. 127 — with realistic ~4.5s
+  // model turns the throttling bites harder (users wait longer, send less), so
+  // equilibrium settles ~3,300 rps at ~0.73 util (was ~4,100 / ~0.9 at the old,
+  // too-fast 800ms) — still no 429s.
   const auditDesign = (): ArenaDesign => ({
     nodes: [
       n("c", "client"),
@@ -345,12 +348,15 @@ describe("closed-loop equilibrium (110 AC1–AC3, AC5)", () => {
   it("AC2 — the audited 122k-user design self-throttles instead of shedding", () => {
     const d = auditDesign();
     const rps = equilibriumRps(d, 122_300, 20);
-    expect(rps).toBeGreaterThanOrEqual(3_900);
-    expect(rps).toBeLessThanOrEqual(4_300);
+    // Self-throttled well below the open-loop demand (6,115 rps) — no shedding.
+    expect(rps).toBeLessThan(122_300 / 20);
+    expect(rps).toBeGreaterThanOrEqual(3_100);
+    expect(rps).toBeLessThanOrEqual(3_500);
     const m = computeMetrics(d, rps);
     for (const id of ["llm1", "llm2", "llm3"]) {
-      expect(m.get(id)!.utilization, `${id} util`).toBeGreaterThanOrEqual(0.87);
-      expect(m.get(id)!.utilization, `${id} util`).toBeLessThanOrEqual(0.95);
+      // Under saturation (< 1) and non-trivially loaded — the honest equilibrium.
+      expect(m.get(id)!.utilization, `${id} util`).toBeGreaterThanOrEqual(0.6);
+      expect(m.get(id)!.utilization, `${id} util`).toBeLessThan(1);
       expect(m.get(id)!.shedRps, `${id} shed`).toBe(0);
     }
   });
@@ -370,8 +376,11 @@ describe("closed-loop equilibrium (110 AC1–AC3, AC5)", () => {
   });
 
   it("AC5 — a fleet small enough still saturates at equilibrium (shed > 0)", () => {
+    // 127 — realistic ~4.5s turns throttle a closed population much harder, so the
+    // fleet has to be pushed further to still shed: 100k users at 1 msg/5s against
+    // a single 150-calls/s deployment overwhelms even the self-throttled rate.
     const d = tinyFleet();
-    const rps = equilibriumRps(d, 20_000, 5);
+    const rps = equilibriumRps(d, 100_000, 5);
     expect(computeMetrics(d, rps).get("llm")!.shedRps).toBeGreaterThan(0);
   });
 
@@ -997,5 +1006,70 @@ describe("125 — async work behind a queue leaves the turn path (AC2, AC3)", ()
     const m = computeMetrics(design, over);
     expect(m.get("api")!.shedRps).toBeGreaterThan(0); // the provider's 429s, synchronous
     expect(m.get("api")!.async).toBe(false);
+  });
+});
+
+// --- 127-arena-llm-latency-calibration --------------------------------------------
+
+describe("127 — realistic decode makes turns hold more streams (AC4)", () => {
+  it("the default agent call is several seconds, dominating a backend→llm turn", () => {
+    // client → backend → llm : the turn path is dominated by the model's decode.
+    const design: ArenaDesign = {
+      nodes: [n("client", "client"), n("backend", "backend"), n("llm", "llm")],
+      edges: [e("client", "backend"), e("backend", "llm")],
+    };
+    // At a light, healthy load the e2e turn is on the order of the model call
+    // (several seconds), not sub-second.
+    const e2e = endToEndLatencyMs(design, 50);
+    expect(e2e).toBeGreaterThanOrEqual(3000);
+  });
+
+  it("held-in-flight is Little's-Law consistent with the recalibrated turn time", () => {
+    const design: ArenaDesign = {
+      nodes: [n("client", "client"), n("backend", "backend"), n("llm", "llm")],
+      edges: [e("client", "backend"), e("backend", "llm")],
+    };
+    const load = 50; // well under the llm's 150 calls/s capacity — healthy
+    const held = heldInFlight(design, load).get("backend")!;
+    const turnSec = turnPathLatenciesMs(design, load).get("backend")! / 1000;
+    const throughput = computeMetrics(design, load).get("backend")!.throughput;
+    expect(held).not.toBeNull();
+    // held ≈ throughput × time-in-system (Little's Law), and with multi-second
+    // turns that is many streams even at a modest 50 req/s.
+    expect(held!).toBeCloseTo(throughput * turnSec, 5);
+    expect(held!).toBeGreaterThan(throughput); // > 1s held ⇒ more streams than rps
+  });
+});
+
+// --- 128-arena-model-tier ---------------------------------------------------------
+
+describe("128 — model tier moves latency + cost, never capacity (AC5)", () => {
+  const TIERS = ["nano", "mini", "standard", "large"] as const;
+  const L = 10; // well under one deployment's capacity — healthy, no queueing
+
+  it("a node's calls/s capacity is identical across all four model tiers", () => {
+    const caps = TIERS.map((modelTier) => {
+      const design: ArenaDesign = { nodes: [n("a", "llm", { modelTier })], edges: [] };
+      return computeMetrics(design, L).get("a")!.capacity;
+    });
+    // capacity is a function of quota/size/region/shape — NOT the model tier.
+    for (const c of caps) expect(c).toBe(caps[0]);
+  });
+
+  it("per-call latency differs across tiers (bigger model = slower)", () => {
+    const lat = TIERS.map((modelTier) => {
+      const design: ArenaDesign = { nodes: [n("a", "llm", { modelTier })], edges: [] };
+      return computeMetrics(design, L).get("a")!.latencyMs;
+    });
+    for (let i = 1; i < lat.length; i++) expect(lat[i]).toBeGreaterThan(lat[i - 1]);
+  });
+
+  it("the LLM usage bill rises with a bigger tier at the same load", () => {
+    const bill = (modelTier: (typeof TIERS)[number]) =>
+      llmCost({ nodes: [n("a", "llm", { modelTier })], edges: [] }, L).usagePerHour;
+    expect(bill("large")).toBeGreaterThan(bill("nano"));
+    // mini is the anchor — an LLM node with no tier bills exactly like explicit mini.
+    const implicit = llmCost({ nodes: [n("a", "llm")], edges: [] }, L).usagePerHour;
+    expect(implicit).toBe(bill("mini"));
   });
 });

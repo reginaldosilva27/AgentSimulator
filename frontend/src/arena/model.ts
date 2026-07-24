@@ -15,6 +15,7 @@ import {
   CONCURRENCY_BUDGET_PER_UNIT,
   CROSS_REGION_LATENCY_MS,
   DEFAULT_CALL_SHAPE,
+  DEFAULT_MODEL_TIER,
   defaultHitRatioFor,
   isCacheLike,
   LLM_COST_PER_DEPLOYMENT_HOUR_USD,
@@ -29,6 +30,7 @@ import {
   type ArenaKind,
   type CallShape,
   type InstanceSize,
+  type ModelTier,
 } from "./components";
 
 export interface ArenaNodeSpec {
@@ -46,6 +48,9 @@ export interface ArenaNodeSpec {
   /** 106/114 — region annotation. Since 114 it has teeth: LLM pools sharing a
    *  region share the regional quota, and cross-region hops add latency. */
   region?: string;
+  /** 128 — LLM only: which model SKU runs here (latency + cost, not capacity).
+   *  Absent resolves to the `mini` anchor, so pre-128 designs are unchanged. */
+  modelTier?: ModelTier;
 }
 
 export interface ArenaEdge {
@@ -117,9 +122,12 @@ export function effectiveCapacity(
   return base * SIZE_MULTIPLIER[spec.size] * replicas;
 }
 
-/** 117 — unloaded service latency: shape-derived for the LLM, benchmark elsewhere. */
-function baseLatencyMsOf(kind: ArenaKind, shape: CallShape): number {
-  return kind === "llm" ? llmBaseLatencyMsFor(shape) : BENCHMARKS[kind].baseLatencyMs;
+/** 117/128 — unloaded service latency: shape-derived for the LLM (scaled by its
+ *  model tier), benchmark elsewhere. */
+function baseLatencyMsOf(kind: ArenaKind, shape: CallShape, tier?: ModelTier): number {
+  return kind === "llm"
+    ? llmBaseLatencyMsFor(shape, tier ?? DEFAULT_MODEL_TIER)
+    : BENCHMARKS[kind].baseLatencyMs;
 }
 
 /**
@@ -314,7 +322,7 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
         throughput: 0,
         capacity,
         utilization: 0,
-        latencyMs: baseLatencyMsOf(sp.kind, shape),
+        latencyMs: baseLatencyMsOf(sp.kind, shape, sp.modelTier),
         status: "unreachable",
         bottleneck: false,
         routingTax,
@@ -331,7 +339,7 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
       throughput: Math.min(inbound, capacity),
       capacity,
       utilization,
-      latencyMs: queueLatency(baseLatencyMsOf(sp.kind, shape), utilization),
+      latencyMs: queueLatency(baseLatencyMsOf(sp.kind, shape, sp.modelTier), utilization),
       status: statusFor(utilization),
       bottleneck: utilization > 1,
       routingTax,
@@ -510,14 +518,15 @@ export function llmCost(
   offeredLoad: number,
 ): { provisionedPerHour: number; usagePerHour: number } {
   const metrics = computeMetrics(design, offeredLoad);
-  // 117 — the usage bill prices the workload's actual call shape.
-  const perCallUsd = llmCostPerCallUsd(design.callShape ?? DEFAULT_CALL_SHAPE);
+  const shape = design.callShape ?? DEFAULT_CALL_SHAPE;
   let provisionedPerHour = 0;
   let usagePerHour = 0;
   for (const sp of design.nodes) {
     if (sp.kind !== "llm") continue;
     provisionedPerHour +=
       Math.max(1, sp.replicas) * SIZE_MULTIPLIER[sp.size] * LLM_COST_PER_DEPLOYMENT_HOUR_USD;
+    // 117/128 — the usage bill prices the workload's call shape at THIS node's tier.
+    const perCallUsd = llmCostPerCallUsd(shape, sp.modelTier);
     usagePerHour += metrics.get(sp.id)!.throughput * perCallUsd * 3600;
   }
   return { provisionedPerHour, usagePerHour };

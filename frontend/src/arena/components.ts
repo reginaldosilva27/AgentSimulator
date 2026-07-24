@@ -80,11 +80,11 @@ export const BENCHMARKS: Record<ArenaKind, Benchmark> = {
   // quota for gpt-4.1-mini, per region/subscription (May-2026 docs), at the stated
   // agent-shaped call of ~2.5k tokens: Tier 1 = 5M TPM ≈ 33 calls/s · Tier 3 =
   // 46M ≈ 307 · Tier 5 = 150M ≈ 1,000. Medium (150) sits in the Tier 2–3 band;
-  // the size ladder (75/150/300/600) spans Tiers 1→4. Latency is the BLENDED
-  // per-call service time: a ReAct turn mixes short tool-decision rounds (~100
-  // output tokens, under a second) with one long generate (~500 tokens, 3–4 s) —
-  // the e2e turn readout multiplies it by calls-per-request.
-  llm: { baseCapacity: 150, baseLatencyMs: 800 }, // rate-limited + slow — the agent's wall
+  // the size ladder (75/150/300/600) spans Tiers 1→4.
+  // 127 — the latency is shape-derived (see llmBaseLatencyMsFor): at the default
+  // 2k/500 call it is ~4.5 s, an OpenAI-realistic figure for a 500-token generate
+  // at gpt-4.1-mini decode speed (~125 tok/s) — NOT the old, ~5–8× too fast 800 ms.
+  llm: { baseCapacity: 150, baseLatencyMs: 4500 }, // rate-limited + slow — the agent's wall
   vectorDb: { baseCapacity: 2_000, baseLatencyMs: 25 },
   mcp: { baseCapacity: 1_000, baseLatencyMs: 50 },
   appDb: { baseCapacity: 3_000, baseLatencyMs: 10 },
@@ -216,31 +216,100 @@ export function llmBaseCapacityFor(shape: CallShape): number {
   return LLM_DEPLOYMENT_TPM_MEDIUM / 60 / tokensPerCall(shape);
 }
 
-/** 117 — per-call latency decomposition, calibrated so the default shape lands
- *  on the 116 blended 800 ms: fixed TTFT + prefill (input) + decode (output).
- *  Teaching slopes (stated, not measured): prefill ≈ 20k tok/s; decode ≈ 1 ms/tok
- *  — the BLENDED figure across a turn's mixed short/long rounds, not one stream. */
-export const LLM_TTFT_MS = 200;
+/** 117/127 — per-call latency decomposition: fixed TTFT + prefill (input) +
+ *  decode (output). Calibrated (127) to a realistic OpenAI **gpt-4.1-mini class**
+ *  call — the implied model here, matching the cost anchor. Stated teaching
+ *  slopes (order-of-magnitude, not measured):
+ *   - TTFT ≈ 400 ms  (hosted-API time-to-first-token under normal load);
+ *   - prefill ≈ 20k tok/s (0.05 ms/tok — input processing, never the bottleneck);
+ *   - decode ≈ 125 tok/s (8 ms/tok — output generation, THE dominant term).
+ *  So the default 2k/500 call ≈ 400 + 100 + 4000 = 4,500 ms, in the ~3–7 s band a
+ *  500-token OpenAI generate really takes. The pre-127 decode (1 ms/tok ⇒ 1,000
+ *  tok/s) was ~5–8× too fast for any OpenAI model. A single blended figure (no
+ *  per-model variance yet — the Arena has no model selector). */
+export const LLM_TTFT_MS = 400;
 export const LLM_PREFILL_MS_PER_TOKEN = 0.05;
-export const LLM_DECODE_MS_PER_TOKEN = 1.0;
-
-export function llmBaseLatencyMsFor(shape: CallShape): number {
-  return (
-    LLM_TTFT_MS +
-    shape.inputTokens * LLM_PREFILL_MS_PER_TOKEN +
-    shape.outputTokens * LLM_DECODE_MS_PER_TOKEN
-  );
-}
+export const LLM_DECODE_MS_PER_TOKEN = 8.0;
 
 /** gpt-4.1-mini global prices — the 103/116 cost anchor, now per-token inputs. */
 export const LLM_INPUT_USD_PER_MTOK = 0.4;
 export const LLM_OUTPUT_USD_PER_MTOK = 1.6;
 
-/** Cost of one call at this shape (order-of-magnitude estimate, stated in the hint). */
-export function llmCostPerCallUsd(shape: CallShape): number {
+/** 128-arena-model-tier — WHICH model runs on an LLM deployment. Orthogonal to the
+ *  instance size (that's the quota/PTU capacity tier); the tier trades per-call
+ *  latency and per-call cost. Anchored to real OpenAI SKUs — no invented parameter
+ *  counts (§3). `mini` is THE anchor: its profile is the pre-128 constants verbatim,
+ *  so every existing preset/example is byte-for-byte unchanged (default tier). */
+export type ModelTier = "nano" | "mini" | "standard" | "large";
+export const MODEL_TIERS: readonly ModelTier[] = ["nano", "mini", "standard", "large"];
+export const DEFAULT_MODEL_TIER: ModelTier = "mini";
+
+/** Each tier maps to a real OpenAI SKU (proper noun — not translated). */
+export const MODEL_TIER_SKU: Record<ModelTier, string> = {
+  nano: "gpt-4.1-nano",
+  mini: "gpt-4.1-mini",
+  standard: "gpt-4.1",
+  large: "gpt-5",
+};
+
+export interface ModelTierProfile {
+  /** Fixed time-to-first-token (ms). */
+  ttftMs: number;
+  /** Input processing slope (ms/token) — never the bottleneck. */
+  prefillMsPerTok: number;
+  /** Output generation slope (ms/token) — the dominant term. */
+  decodeMsPerTok: number;
+  inputUsdPerMtok: number;
+  outputUsdPerMtok: number;
+}
+
+/** 128 — per-tier latency slopes + prices. `mini` reuses the existing LLM_*
+ *  constants verbatim (byte-for-byte anchor). nano/standard/large are teaching
+ *  order-of-magnitude figures (like 116/117/127), monotonic in latency AND cost:
+ *  a smaller model is faster + cheaper, a bigger one slower + pricier. The Arena
+ *  scores speed & cost only — NOT answer quality (stated in the hint). The gpt-5
+ *  figures are estimates flagged to re-check against published price/latency. */
+export const MODEL_TIER_PROFILE: Record<ModelTier, ModelTierProfile> = {
+  nano: {
+    ttftMs: 300,
+    prefillMsPerTok: LLM_PREFILL_MS_PER_TOKEN,
+    decodeMsPerTok: 5.0, // ~200 tok/s
+    inputUsdPerMtok: 0.1,
+    outputUsdPerMtok: 0.4,
+  },
+  mini: {
+    ttftMs: LLM_TTFT_MS,
+    prefillMsPerTok: LLM_PREFILL_MS_PER_TOKEN,
+    decodeMsPerTok: LLM_DECODE_MS_PER_TOKEN, // ~125 tok/s — the anchor
+    inputUsdPerMtok: LLM_INPUT_USD_PER_MTOK,
+    outputUsdPerMtok: LLM_OUTPUT_USD_PER_MTOK,
+  },
+  standard: {
+    ttftMs: 500,
+    prefillMsPerTok: LLM_PREFILL_MS_PER_TOKEN,
+    decodeMsPerTok: 13.0, // ~77 tok/s
+    inputUsdPerMtok: 2.0,
+    outputUsdPerMtok: 8.0,
+  },
+  large: {
+    ttftMs: 700,
+    prefillMsPerTok: LLM_PREFILL_MS_PER_TOKEN,
+    decodeMsPerTok: 20.0, // ~50 tok/s
+    inputUsdPerMtok: 5.0,
+    outputUsdPerMtok: 15.0,
+  },
+};
+
+export function llmBaseLatencyMsFor(shape: CallShape, tier: ModelTier = DEFAULT_MODEL_TIER): number {
+  const p = MODEL_TIER_PROFILE[tier];
+  return p.ttftMs + shape.inputTokens * p.prefillMsPerTok + shape.outputTokens * p.decodeMsPerTok;
+}
+
+/** Cost of one call at this shape + tier (order-of-magnitude estimate). */
+export function llmCostPerCallUsd(shape: CallShape, tier: ModelTier = DEFAULT_MODEL_TIER): number {
+  const p = MODEL_TIER_PROFILE[tier];
   return (
-    (shape.inputTokens * LLM_INPUT_USD_PER_MTOK + shape.outputTokens * LLM_OUTPUT_USD_PER_MTOK) /
-    1_000_000
+    (shape.inputTokens * p.inputUsdPerMtok + shape.outputTokens * p.outputUsdPerMtok) / 1_000_000
   );
 }
 

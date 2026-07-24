@@ -159,6 +159,10 @@ export interface Strings {
     fanoutTurn: (calls: number) => string;
     replicasCeilingHint: string;
     sizes: { small: string; medium: string; large: string; xlarge: string };
+    // 128 — the LLM model-tier control (which model SKU runs on the deployment).
+    modelTier: string;
+    modelTiers: { nano: string; mini: string; standard: string; large: string };
+    modelTierHint: string;
     cacheHitRatio: string;
     bottleneck: string;
     // 125 — a node drained off the request path (behind a queue): its work is
@@ -1432,6 +1436,10 @@ const en: Strings = {
     replicasCeilingHint:
       "At the per-pool max — real fleets escape by adding another pool/region or a higher quota tier.",
     sizes: { small: "Small", medium: "Medium", large: "Large", xlarge: "XLarge" },
+    modelTier: "Model tier",
+    modelTiers: { nano: "Nano", mini: "Mini", standard: "Standard", large: "Large" },
+    modelTierHint:
+      "Which model runs on this deployment. A smaller tier is faster and cheaper per call; a bigger tier is slower and pricier. This sandbox models speed & cost only — NOT answer quality (a smaller model may reason worse). Capacity is set separately by instance size / quota.",
     cacheHitRatio: "Cache hit ratio",
     bottleneck: "Bottleneck",
     asyncBadge: "async",
@@ -2820,6 +2828,10 @@ const pt: Strings = {
     replicasCeilingHint:
       "No máximo por pool — frotas reais escapam adicionando outro pool/região ou um tier de cota maior.",
     sizes: { small: "Pequeno", medium: "Médio", large: "Grande", xlarge: "Extra grande" },
+    modelTier: "Modelo",
+    modelTiers: { nano: "Nano", mini: "Mini", standard: "Padrão", large: "Grande" },
+    modelTierHint:
+      "Qual modelo roda neste deployment. Um tier menor é mais rápido e barato por chamada; um maior é mais lento e caro. Este sandbox modela só velocidade e custo — NÃO a qualidade da resposta (um modelo menor pode raciocinar pior). A capacidade é definida à parte pelo tamanho da instância / cota.",
     cacheHitRatio: "Taxa de acerto do cache",
     bottleneck: "Gargalo",
     asyncBadge: "assíncrono",

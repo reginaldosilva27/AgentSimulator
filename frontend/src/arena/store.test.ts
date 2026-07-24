@@ -493,3 +493,54 @@ describe("arena store — applyPositions (124 AC3)", () => {
     expect({ x: n.x, y: n.y }).toEqual({ x: 7, y: 8 });
   });
 });
+
+// --- 128-arena-model-tier ---------------------------------------------------------
+
+describe("arena store — LLM model tier (128 AC1, AC7)", () => {
+  it("AC1 — a new LLM node defaults to the mini tier; a non-LLM node has none", () => {
+    const llm = useArena.getState().addNode("llm", { x: 0, y: 0 });
+    const be = useArena.getState().addNode("backend", { x: 0, y: 0 });
+    const byId = (id: string) => useArena.getState().nodes.find((n) => n.id === id)!;
+    expect(byId(llm).modelTier).toBe("mini");
+    expect(byId(be).modelTier).toBeUndefined();
+  });
+
+  it("AC7 — setModelTier updates the node, clears the example, and re-persists", () => {
+    const id = useArena.getState().addNode("llm", { x: 0, y: 0 });
+    useArena.getState().loadExample("simple-rag");
+    const llm = useArena.getState().nodes.find((n) => n.kind === "llm")!;
+    useArena.getState().setModelTier(llm.id, "large");
+    expect(useArena.getState().nodes.find((n) => n.id === llm.id)!.modelTier).toBe("large");
+    expect(useArena.getState().exampleId).toBeNull(); // structural edit
+    const blob = JSON.parse(localStorage.getItem(ARENA_STORAGE_KEY)!);
+    expect(blob.nodes.find((n: { id: string }) => n.id === llm.id).modelTier).toBe("large");
+    void id;
+  });
+
+  it("AC7 — an invalid tier, or a tier on a non-LLM node, is ignored", () => {
+    const llm = useArena.getState().addNode("llm", { x: 0, y: 0 });
+    const be = useArena.getState().addNode("backend", { x: 0, y: 0 });
+    // @ts-expect-error — a bad value must be rejected, not written.
+    useArena.getState().setModelTier(llm, "gigantic");
+    expect(useArena.getState().nodes.find((n) => n.id === llm)!.modelTier).toBe("mini");
+    // A valid tier on a non-LLM node is a no-op (the guard keys on kind === "llm").
+    useArena.getState().setModelTier(be, "large");
+    expect(useArena.getState().nodes.find((n) => n.id === be)!.modelTier).toBeUndefined();
+  });
+
+  it("AC1 — a persisted design missing modelTier loads (resolves to mini); a foreign tier is dropped", () => {
+    localStorage.setItem(
+      ARENA_STORAGE_KEY,
+      JSON.stringify({
+        nodes: [
+          { id: "old", kind: "llm", size: "medium", replicas: 1, x: 0, y: 0 },
+          { id: "bad", kind: "llm", size: "medium", replicas: 1, x: 0, y: 0, modelTier: "xxl" },
+        ],
+        edges: [],
+      }),
+    );
+    const restored = loadArena();
+    expect(restored.nodes.find((n) => n.id === "old")!.modelTier).toBeUndefined();
+    expect(restored.nodes.find((n) => n.id === "bad")!.modelTier).toBeUndefined();
+  });
+});
