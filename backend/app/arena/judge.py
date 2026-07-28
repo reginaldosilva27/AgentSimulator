@@ -45,6 +45,38 @@ from ..llm.provider import LLMProvider
 # Prompts
 # --------------------------------------------------------------------------- #
 
+#: The levers the Arena actually offers, stated as KNOBS rather than as a component
+#: list. This is the fix for the first T19 finding: the judge was recommending sound
+#: architecture that this canvas cannot express (multi-AZ, durable queue storage,
+#: state persistence), which is advice the user cannot act on.
+#:
+#: Deliberately not a copy of the frontend's `KIND_META` palette: that would drift
+#: every time a component is added (125 added five in one spec). The knob vocabulary
+#: is small and stable, and a box the design does not have is already visible in the
+#: ARCHITECTURE block the model is given.
+_LEVERS = """\
+WHAT THE OPERATOR CAN ACTUALLY CHANGE. This is a modelled sandbox, not a live cloud,
+and it has exactly these levers:
+- add or remove horizontal units on a box (deployments · containers · replicas);
+- change a box's instance size (vertical);
+- change an LLM box's model tier (a faster+cheaper or slower+pricier model);
+- change how many calls per turn a box receives (the agent's fan-out);
+- move a box to a different region;
+- change a cache's hit ratio;
+- add, remove or re-wire a box from the palette — including inserting a router in
+  front of a model pool, or a cache/queue in front of a tier;
+- change the workload's payload shape (tokens in / tokens out per call).
+
+Recommend ONLY changes expressible with those levers and the boxes already listed.
+Do NOT recommend anything this model cannot express — no availability zones or
+multi-AZ spreading, no storage durability or replication settings, no autoscaling
+policies, no health-check or failover configuration, no session/state persistence
+mechanisms, no SLAs or monitoring. Those are real engineering concerns and they are
+simply not expressible here; naming them gives the reader nothing to act on. If the
+weakness you see genuinely lies outside these levers, say so in one short clause and
+then give the best advice you CAN give inside them.
+"""
+
 _SHARED_RULES = """\
 You are reviewing a proposed architecture for an LLM-agent platform. A deterministic
 capacity model has ALREADY computed whether the design meets its objectives, and that
@@ -56,7 +88,10 @@ Rules:
 - Name boxes by their component name. Say what to change and why.
 - Do not invent figures. If you need a number you were not given, say so.
 - Do not output a pass/fail decision or a score.
-- Answer in {language}. Use at most 150 words, as prose (no headings).
+
+{levers}
+Answer in {language}, as prose (no headings, no lists). HARD LIMIT: 120 words. Being
+under budget is better than being complete — pick the single most important thing.
 """
 
 _RIGOUR = """\
@@ -87,7 +122,10 @@ which way you would go for THIS load and THESE objectives, and why. End with the
 three concrete changes you would make first, in order.
 
 Do not output a pass/fail decision or a score — the capacity model already decided that.
-Answer in {language}. At most 180 words.
+
+{levers}
+Answer in {language}. HARD LIMIT: 150 words. Cut the agreement summary before you cut
+the concrete changes — the changes are the part the reader uses.
 """
 
 
@@ -159,7 +197,7 @@ class JudgeOutput:
 
 
 def _persona_system(lens: str, lang: str) -> str:
-    return _SHARED_RULES.format(language=_language_name(lang)) + "\n" + lens
+    return _SHARED_RULES.format(language=_language_name(lang), levers=_LEVERS) + "\n" + lens
 
 
 async def _one_call(provider: LLMProvider, *, system: str, user: str) -> str:
@@ -193,7 +231,7 @@ async def judge_design(provider: LLMProvider, data: JudgeInput) -> JudgeOutput:
     )
     agreed = await _one_call(
         provider,
-        system=_SYNTHESIS.format(language=_language_name(data.lang)),
+        system=_SYNTHESIS.format(language=_language_name(data.lang), levers=_LEVERS),
         user=synthesis_user,
     )
 

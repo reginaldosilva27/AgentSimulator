@@ -77,12 +77,41 @@
         compliance-driven choice to avoid multi-region is understandable **but** leaves no
         resilience against regional failures") instead of ignoring or obeying it. ✓
       The personas genuinely disagree and the synthesis names the trade-off before choosing.
-      **Two limitations found and accepted for v1** (worth a follow-up, not a blocker):
-      1. The judge sometimes recommends concepts the Arena's vocabulary cannot express (multi-AZ,
+      **Two limitations found** — and **both fixed on 2026-07-28** (a bug fix, so no spec: a
+      failing test first, per CLAUDE.md). See `T19b` below.
+      1. The judge recommended concepts the Arena's vocabulary cannot express (multi-AZ,
          durable queue storage, state persistence) — sound architecture advice that is not
-         actionable on this canvas. The prompt forbids inventing *figures*, not out-of-model
+         actionable on this canvas. The prompt forbade inventing *figures*, not out-of-model
          *concepts*.
-      2. Output runs noticeably over the stated 150/180-word limits.
+      2. Output ran noticeably over the stated 150/180-word limits.
+
+- [x] **T19b — fix both T19 findings (2026-07-28)**: red tests first
+      (`test_prompt_states_the_LEVERS…`, `test_prompt_forbids_advice_outside_the_model`,
+      `test_prompt_asks_for_a_tighter_budget…` + two `[openai]` regressions), then the fix: a new
+      `_LEVERS` block in `judge.py`, shared by both persona prompts and the synthesis, that states
+      the eight knobs the Arena actually offers and forbids advice outside them by name. Stated as
+      **knobs, not a component list**, so it cannot drift from the frontend palette (125 added five
+      components in one spec). Word budgets tightened 150→120 and 180→150, moved to the END of the
+      instruction, with an explicit priority ("cut the agreement summary before the concrete
+      changes").
+
+      **Re-read against the same three cases — outcome:**
+      - **Out-of-model advice: gone.** Every recommendation is now an actual lever ("insert a
+        router in front of two llm1 pools across regions", "reduce llm1 from 20 to 14", "increase
+        q1 from 2 to 5"). Better than asked for: in the over-provisioned case the model now
+        *reasons about the lever boundary* — "Adding a router or multi-region failover is outside
+        current levers and unnecessary here."
+      - **Personas: on budget** (101–116 words against 120).
+      - **Synthesis: improved but still over** — 170–192 words against 150 (was 250–300+). A prompt
+        is a request, not a guarantee; the `[openai]` test therefore pins a *generous* 260-word
+        ceiling, which catches the original "multiples over budget" failure without flaking on the
+        ±20% a model always varies by. **Not claimed as fully met.**
+      - **One residual, deliberately left alone:** both syntheses mention "SLA" — but as a
+        *reasoning caveat* about an absent constraint ("no stated high-availability SLA, so I lean
+        thrift"), not as a recommendation to configure one. That is legitimate reasoning, so the
+        prompt was **not** tightened further to suppress it. The `[openai]` blocklist is
+        deliberately narrow (`availability zone`, `multi-az`, `autoscaling policy`) for the same
+        reason.
 - [x] **T20 — demo check**: standing GitHub-Pages directive — the demo build has no backend, so
       confirm AC11's honest-unavailable path is what ships there. **This is a real decision here,
       not the no-op it was for 129–132.**

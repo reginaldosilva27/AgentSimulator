@@ -357,3 +357,86 @@ def test_ac7_the_two_languages_differ(client):
     # Structural, not lexical: the same design reviewed in two languages must not
     # come back as the same prose.
     assert en.json()["agreed"] != pt.json()["agreed"]
+
+
+# --------------------------------------------------------------------------- #
+# Regression: the two limitations the 133 manual quality read (T19) recorded.
+#
+# Both are prompt-quality defects, not features — no spec, but a failing test
+# first (CLAUDE.md's rule for a bug fix):
+#
+#  1. The judge recommended concepts the Arena's vocabulary cannot express
+#     (multi-AZ, durable queue storage, state persistence). Sound architecture
+#     advice that is NOT actionable on this canvas — the old prompt forbade
+#     inventing *figures* but said nothing about out-of-model *concepts*.
+#  2. Output ran well over the stated word limits.
+# --------------------------------------------------------------------------- #
+
+
+def test_prompt_states_the_LEVERS_the_arena_actually_offers():
+    """The judge must recommend changes the user can actually make on this canvas."""
+    provider = RecordingProvider()
+    _run(provider, _input())
+    for system, _user in provider.calls:
+        # The knob vocabulary, stated as levers (stable) rather than as a component
+        # list (which would drift from the frontend's palette).
+        assert "units" in system
+        assert "instance size" in system
+        assert "model tier" in system
+        assert "calls per turn" in system
+        assert "region" in system
+
+
+def test_prompt_forbids_advice_outside_the_model():
+    provider = RecordingProvider()
+    _run(provider, _input())
+    for system, _user in provider.calls:
+        low = system.lower()
+        # Named explicitly, because these are exactly what the manual read caught.
+        assert "availability zone" in low
+        assert "cannot express" in low or "not expressible" in low
+
+
+def test_prompt_asks_for_a_tighter_budget_than_it_used_to():
+    provider = RecordingProvider()
+    _run(provider, _input())
+    persona_system, _ = provider.calls[0]
+    synthesis_system, _ = provider.calls[2]
+    # Tightened from 150/180 after the T19 overrun, and stated at the END of the
+    # instruction where models attend to it more.
+    assert "120 words" in persona_system
+    assert "150 words" in synthesis_system
+
+
+@pytest.mark.openai
+def test_a_real_critique_stays_within_a_generous_ceiling():
+    """A prompt is a request, not a guarantee — so the ceiling is deliberately loose.
+
+    This catches the T19 failure mode (running *multiples* over budget) without
+    flaking on the ±20% a model will always vary by.
+    """
+    from app.llm.provider import get_provider
+
+    out = asyncio.run(judge_design(get_provider(), _input()))
+    for part, text in (
+        ("rigorous", out.rigorous),
+        ("pragmatic", out.pragmatic),
+        ("agreed", out.agreed),
+    ):
+        words = len(text.split())
+        assert words < 260, f"{part} ran to {words} words"
+
+
+@pytest.mark.openai
+def test_a_real_critique_avoids_the_clearest_out_of_model_advice():
+    """Structural, and deliberately narrow: only the terms T19 actually caught.
+
+    A broad blocklist would be flaky; these three are unambiguous — the Arena has no
+    availability zones, no storage durability knob and no autoscaling policy.
+    """
+    from app.llm.provider import get_provider
+
+    out = asyncio.run(judge_design(get_provider(), _input()))
+    joined = f"{out.rigorous}\n{out.pragmatic}\n{out.agreed}".lower()
+    for banned in ("availability zone", "multi-az", "autoscaling policy"):
+        assert banned not in joined, f"recommended {banned!r}, which this canvas cannot express"
