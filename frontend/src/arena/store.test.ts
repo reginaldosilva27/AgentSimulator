@@ -3,9 +3,18 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { CALL_SHAPE_BOUNDS, DEFAULT_CALL_SHAPE } from "./components";
+import { CHALLENGES } from "./challenges";
 import { EXAMPLES } from "./examples";
 import { equilibriumRps, rpsOf } from "./model";
-import { ARENA_STORAGE_KEY, loadArena, NOTE_MAX, useArena } from "./store";
+import { DEFAULT_SLO_TARGETS } from "./slo";
+import { PROGRESS_STORAGE_KEY, loadProgress } from "./progress";
+import {
+  ARENA_STORAGE_KEY,
+  __setArenaClock,
+  loadArena,
+  NOTE_MAX,
+  useArena,
+} from "./store";
 
 beforeEach(() => {
   localStorage.clear();
@@ -19,6 +28,12 @@ beforeEach(() => {
     exampleId: null,
     selectedId: null,
     selectedEdgeId: null,
+    sloTargets: DEFAULT_SLO_TARGETS,
+    challengeId: null,
+    sandbox: null,
+    referenceShown: false,
+    dismissedNudges: [],
+    faults: [],
   });
 });
 
@@ -542,5 +557,360 @@ describe("arena store — LLM model tier (128 AC1, AC7)", () => {
     const restored = loadArena();
     expect(restored.nodes.find((n) => n.id === "old")!.modelTier).toBeUndefined();
     expect(restored.nodes.find((n) => n.id === "bad")!.modelTier).toBeUndefined();
+  });
+});
+
+describe("arena store — SLO targets (129 AC10)", () => {
+  it("seeds the measured defaults and round-trips an edited target", () => {
+    expect(useArena.getState().sloTargets).toEqual(DEFAULT_SLO_TARGETS);
+
+    useArena.getState().setSloTarget("latency", 12_000);
+    expect(useArena.getState().sloTargets.latency).toBe(12_000);
+
+    const restored = loadArena();
+    expect(restored.sloTargets.latency).toBe(12_000);
+  });
+
+  it("switches an objective OFF with null, and back on", () => {
+    useArena.getState().setSloTarget("shed", null);
+    expect(useArena.getState().sloTargets.shed).toBeUndefined();
+    expect(loadArena().sloTargets.shed).toBeUndefined();
+
+    // Cost is off by default (129's measured inversion) — turning it on is the
+    // same gesture as any other target edit.
+    useArena.getState().setSloTarget("cost", 5_000);
+    expect(useArena.getState().sloTargets.cost).toBe(5_000);
+  });
+
+  it("a pre-129 blob (no sloTargets) loads with the defaults", () => {
+    localStorage.setItem(ARENA_STORAGE_KEY, JSON.stringify({ nodes: [], edges: [] }));
+    expect(loadArena().sloTargets).toEqual(DEFAULT_SLO_TARGETS);
+  });
+
+  it("drops unknown keys and non-finite / negative values instead of throwing", () => {
+    localStorage.setItem(
+      ARENA_STORAGE_KEY,
+      JSON.stringify({
+        nodes: [],
+        edges: [],
+        sloTargets: { bogus: "x", cost: -5, latency: "nope", headroom: 0.3, shed: 0 },
+      }),
+    );
+    const t = loadArena().sloTargets;
+    expect(t).toEqual({ headroom: 0.3, shed: 0 });
+    expect("bogus" in t).toBe(false);
+  });
+
+  it("rejects an out-of-range value from the setter", () => {
+    useArena.getState().setSloTarget("headroom", 5); // headroom is a 0..1 fraction
+    expect(useArena.getState().sloTargets.headroom).toBe(DEFAULT_SLO_TARGETS.headroom);
+    useArena.getState().setSloTarget("latency", -1);
+    expect(useArena.getState().sloTargets.latency).toBe(DEFAULT_SLO_TARGETS.latency);
+  });
+});
+
+describe("arena store — challenge mode (130 AC4, AC5, AC6, AC9, AC11, AC17)", () => {
+  const CH = "agent-wall";
+
+  it("AC4 — entering applies the challenge's givens and starting design", () => {
+    useArena.getState().enterChallenge(CH);
+    const s = useArena.getState();
+    const c = CHALLENGES.find((x) => x.id === CH)!;
+    expect(s.challengeId).toBe(CH);
+    expect(s.users).toBe(c.givens.users);
+    expect(s.thinkTimeSec).toBe(c.givens.thinkTimeSec);
+    expect(s.callShape).toEqual(c.givens.callShape);
+    expect(s.sloTargets).toEqual(c.objectives);
+    expect(s.nodes.map((n) => n.id).sort()).toEqual(c.start().nodes.map((n) => n.id).sort());
+  });
+
+  it("AC5 — the sandbox design + load story survive a round trip", () => {
+    const be = useArena.getState().addNode("backend", { x: 10, y: 20 });
+    const db = useArena.getState().addNode("appDb", { x: 200, y: 20 });
+    useArena.getState().connect(be, db);
+    useArena.getState().setReplicas(db, 5);
+    useArena.getState().setUsers(9_000);
+    useArena.getState().setThinkTime(60);
+    const before = useArena.getState();
+    const snapshot = {
+      nodes: before.nodes,
+      edges: before.edges,
+      users: before.users,
+      thinkTimeSec: before.thinkTimeSec,
+      callShape: before.callShape,
+      sloTargets: before.sloTargets,
+    };
+
+    useArena.getState().enterChallenge(CH);
+    expect(useArena.getState().nodes.map((n) => n.id)).not.toEqual(snapshot.nodes.map((n) => n.id));
+
+    useArena.getState().exitChallenge();
+    const after = useArena.getState();
+    expect(after.challengeId).toBeNull();
+    expect(after.nodes).toEqual(snapshot.nodes);
+    expect(after.edges).toEqual(snapshot.edges);
+    expect(after.users).toBe(snapshot.users);
+    expect(after.thinkTimeSec).toBe(snapshot.thinkTimeSec);
+    expect(after.callShape).toEqual(snapshot.callShape);
+    expect(after.sloTargets).toEqual(snapshot.sloTargets);
+  });
+
+  it("AC6 — the givens are LOCKED: load controls are no-ops while active", () => {
+    useArena.getState().enterChallenge(CH);
+    const c = CHALLENGES.find((x) => x.id === CH)!;
+
+    useArena.getState().setUsers(1);
+    useArena.getState().setThinkTime(120);
+    useArena.getState().setCallShape(500, 100);
+    useArena.getState().setOfferedLoad(3);
+
+    const s = useArena.getState();
+    expect(s.users).toBe(c.givens.users);
+    expect(s.thinkTimeSec).toBe(c.givens.thinkTimeSec);
+    expect(s.callShape).toEqual(c.givens.callShape);
+  });
+
+  it("AC6 — the DESIGN is still fully editable while a challenge is active", () => {
+    useArena.getState().enterChallenge(CH);
+    const llm = useArena.getState().nodes.find((n) => n.kind === "llm")!;
+    useArena.getState().setReplicas(llm.id, 12);
+    expect(useArena.getState().nodes.find((n) => n.id === llm.id)!.replicas).toBe(12);
+    expect(useArena.getState().challengeId).toBe(CH); // editing does not exit
+  });
+
+  it("AC9 — loadReference puts the solution on the canvas, challenge still active + locked", () => {
+    useArena.getState().enterChallenge(CH);
+    useArena.getState().loadReference();
+    const c = CHALLENGES.find((x) => x.id === CH)!;
+    const s = useArena.getState();
+    expect(s.nodes.map((n) => n.id).sort()).toEqual(c.reference().nodes.map((n) => n.id).sort());
+    expect(s.challengeId).toBe(CH);
+    expect(s.referenceShown).toBe(true); // 132 will record this as `assisted`
+    useArena.getState().setUsers(1);
+    expect(useArena.getState().users).toBe(c.givens.users); // still locked
+  });
+
+  it("AC17 — entering un-dismisses nudges; exiting restores the sandbox's dismissals", () => {
+    // Wire a backend → llm in the sandbox and wave the fan-out nudge away.
+    const be = useArena.getState().addNode("backend", { x: 0, y: 0 });
+    const llm = useArena.getState().addNode("llm", { x: 200, y: 0 });
+    useArena.getState().connect(be, llm);
+    useArena.getState().dismissNudge(llm);
+    expect(useArena.getState().dismissedNudges).toContain(llm);
+
+    useArena.getState().enterChallenge(CH);
+    expect(useArena.getState().dismissedNudges).toEqual([]); // the lesson re-fires
+
+    useArena.getState().exitChallenge();
+    expect(useArena.getState().dismissedNudges).toContain(llm);
+  });
+
+  it("AC11 — challenge mode survives a reload; an unknown id falls back to sandbox", () => {
+    useArena.getState().enterChallenge(CH);
+    expect(loadArena().challengeId).toBe(CH);
+
+    localStorage.setItem(
+      ARENA_STORAGE_KEY,
+      JSON.stringify({ nodes: [], edges: [], challengeId: "no-such-challenge" }),
+    );
+    expect(loadArena().challengeId).toBeNull();
+  });
+
+  it("entering an unknown challenge is a no-op (never throws)", () => {
+    const before = useArena.getState().nodes;
+    useArena.getState().enterChallenge("nope");
+    expect(useArena.getState().challengeId).toBeNull();
+    expect(useArena.getState().nodes).toEqual(before);
+  });
+});
+
+describe("arena store — chaos faults (131 AC8, AC12, AC13)", () => {
+  it("AC8 — faults are TRANSIENT: never persisted, and clearing restores the baseline exactly", () => {
+    const llm = useArena.getState().addNode("llm", { x: 0, y: 0 });
+    const baseline = useArena.getState().offeredLoad;
+
+    useArena.getState().applyFault({ type: "instanceDown", nodeId: llm });
+    expect(useArena.getState().faults).toHaveLength(1);
+
+    // Not in the persisted blob…
+    const blob = JSON.parse(localStorage.getItem(ARENA_STORAGE_KEY)!);
+    expect(blob.faults).toBeUndefined();
+    // …so a reload comes back to the intact design.
+    expect((loadArena() as unknown as { faults?: unknown }).faults).toBeUndefined();
+
+    useArena.getState().clearFaults();
+    expect(useArena.getState().faults).toEqual([]);
+    expect(useArena.getState().offeredLoad).toBe(baseline);
+  });
+
+  it("AC4 — applying a latency spike lowers the derived equilibrium rate", () => {
+    useArena.getState().loadExample("llm-fleet");
+    const before = useArena.getState().offeredLoad;
+    const llm = useArena.getState().nodes.find((n) => n.kind === "llm")!;
+
+    useArena.getState().applyFault({ type: "latencySpike", nodeId: llm.id, magnitude: 10 });
+    expect(useArena.getState().offeredLoad).toBeLessThan(before);
+
+    useArena.getState().clearFaults();
+    expect(useArena.getState().offeredLoad).toBe(before);
+  });
+
+  it("removeFault drops one and leaves the others", () => {
+    const a = useArena.getState().addNode("llm", { x: 0, y: 0 });
+    const b = useArena.getState().addNode("llm", { x: 200, y: 0 });
+    useArena.getState().applyFault({ type: "instanceDown", nodeId: a });
+    useArena.getState().applyFault({ type: "instanceDown", nodeId: b });
+    const [first] = useArena.getState().faults;
+
+    useArena.getState().removeFault(first.id);
+    expect(useArena.getState().faults).toHaveLength(1);
+    expect(useArena.getState().faults[0].nodeId).toBe(b);
+  });
+
+  it("AC13 — entering a challenge clears sandbox faults; exiting does NOT restore them", () => {
+    const llm = useArena.getState().addNode("llm", { x: 0, y: 0 });
+    useArena.getState().applyFault({ type: "instanceDown", nodeId: llm });
+    expect(useArena.getState().faults).toHaveLength(1);
+
+    useArena.getState().enterChallenge("agent-wall");
+    expect(useArena.getState().faults).toEqual([]); // the challenge's own take over
+
+    useArena.getState().exitChallenge();
+    // A fault is an experiment and was never part of the design.
+    expect(useArena.getState().faults).toEqual([]);
+  });
+
+  it("AC12 — a challenge's given faults are applied and cannot be removed", () => {
+    useArena.getState().enterChallenge("survive-the-outage");
+    const given = useArena.getState().faults;
+    expect(given).toHaveLength(1);
+    expect(given[0].type).toBe("regionOutage");
+
+    useArena.getState().removeFault(given[0].id);
+    expect(useArena.getState().faults).toHaveLength(1); // still there — it's the problem
+
+    useArena.getState().clearFaults();
+    expect(useArena.getState().faults).toHaveLength(1); // clear-all spares the givens
+
+    // Outside the challenge the same id is removable again.
+    useArena.getState().exitChallenge();
+    expect(useArena.getState().faults).toEqual([]);
+  });
+});
+
+describe("arena store — attempts & progress (132 AC1b, AC5, AC6, AC8, AC10)", () => {
+  const WALL = "agent-wall";
+
+  beforeEach(() => {
+    localStorage.removeItem(PROGRESS_STORAGE_KEY);
+    useArena.setState({ progress: {}, lastVerdictMet: false });
+    let tick = 1_000;
+    __setArenaClock(() => (tick += 1_000)); // AC8 — deterministic timestamps
+  });
+
+  it("AC1b — solve → refine → exit records TWO attempts, the second improved", () => {
+    useArena.getState().enterChallenge(WALL);
+    // Solve it (the shipped reference clears the objective).
+    useArena.getState().loadReference();
+    const afterSolve = useArena.getState().progress[WALL]!;
+    expect(afterSolve.attempts).toHaveLength(1);
+    expect(afterSolve.attempts[0].passed).toBe(true);
+    expect(afterSolve.status).toBe("solved");
+
+    // Refine while staying solved — no new record yet…
+    const llm = useArena.getState().nodes.find((n) => n.kind === "llm")!;
+    useArena.getState().setReplicas(llm.id, llm.replicas + 4);
+    expect(useArena.getState().progress[WALL]!.attempts).toHaveLength(1);
+
+    // …until leaving, which captures the refined state.
+    useArena.getState().exitChallenge();
+    const history = useArena.getState().progress[WALL]!.attempts;
+    expect(history).toHaveLength(2);
+    expect(history[1].passed).toBe(true);
+    expect(history[1].at).toBeGreaterThan(history[0].at); // the injected clock
+  });
+
+  it("AC1b — a never-solved challenge records exactly ONE attempt on exit", () => {
+    useArena.getState().enterChallenge(WALL);
+    useArena.getState().exitChallenge();
+    const rec = useArena.getState().progress[WALL]!;
+    expect(rec.attempts).toHaveLength(1);
+    expect(rec.attempts[0].passed).toBe(false);
+    expect(rec.status).toBe("attempted");
+  });
+
+  it("AC1b — re-entering and leaving with NOTHING changed adds no duplicate", () => {
+    useArena.getState().enterChallenge(WALL);
+    useArena.getState().exitChallenge();
+    expect(useArena.getState().progress[WALL]!.attempts).toHaveLength(1);
+
+    useArena.getState().enterChallenge(WALL);
+    useArena.getState().exitChallenge();
+    expect(useArena.getState().progress[WALL]!.attempts).toHaveLength(1);
+  });
+
+  it("records `assisted` when the reference was revealed", () => {
+    useArena.getState().enterChallenge(WALL);
+    useArena.getState().loadReference();
+    expect(useArena.getState().progress[WALL]!.attempts[0].assisted).toBe(true);
+  });
+
+  it("AC6 — progress lives under its OWN key: clearing the design leaves it intact", () => {
+    useArena.getState().enterChallenge(WALL);
+    useArena.getState().exitChallenge();
+    expect(useArena.getState().progress[WALL]).toBeTruthy();
+
+    useArena.getState().clear();
+    expect(useArena.getState().progress[WALL]).toBeTruthy(); // survived
+    expect(localStorage.getItem(PROGRESS_STORAGE_KEY)).toBeTruthy();
+
+    useArena.getState().loadExample("simple-rag");
+    expect(useArena.getState().progress[WALL]).toBeTruthy(); // still survived
+  });
+
+  it("AC10 — resetting progress clears the record and leaves the canvas alone", () => {
+    useArena.getState().enterChallenge(WALL);
+    useArena.getState().exitChallenge();
+    useArena.getState().loadExample("prod");
+    const canvas = useArena.getState().nodes.length;
+
+    useArena.getState().resetProgress();
+    expect(useArena.getState().progress).toEqual({});
+    expect(useArena.getState().nodes).toHaveLength(canvas); // untouched
+  });
+
+  it("AC5 — restoring an attempt reproduces its design and faults", () => {
+    useArena.getState().enterChallenge(WALL);
+    const llm = useArena.getState().nodes.find((n) => n.kind === "llm")!;
+    useArena.getState().setReplicas(llm.id, 9);
+    useArena.getState().applyFault({ type: "latencySpike", nodeId: llm.id, magnitude: 2 });
+    useArena.getState().exitChallenge();
+
+    // The LAST attempt is the one recorded on exit — scaling to 9 replicas already
+    // solved the challenge, so attempt #1 predates the fault (AC1b working).
+    const attempts = useArena.getState().progress[WALL]!.attempts;
+    const seq = attempts.at(-1)!.seq;
+    expect(attempts.at(-1)!.faults).toHaveLength(1);
+    // Wander off, then come back to that attempt.
+    useArena.getState().clear();
+    useArena.getState().restoreAttempt(WALL, seq);
+
+    const restored = useArena.getState();
+    expect(restored.nodes.find((n) => n.kind === "llm")!.replicas).toBe(9);
+    expect(restored.faults).toHaveLength(1);
+    expect(restored.faults[0].type).toBe("latencySpike");
+  });
+
+  it("restoring an unknown attempt is a no-op", () => {
+    const before = useArena.getState().nodes;
+    useArena.getState().restoreAttempt(WALL, 999);
+    expect(useArena.getState().nodes).toEqual(before);
+  });
+
+  it("progress round-trips through its own storage key", () => {
+    useArena.getState().enterChallenge(WALL);
+    useArena.getState().exitChallenge();
+    const restored = loadProgress(CHALLENGES.map((c) => c.id));
+    expect(restored[WALL]!.attempts).toHaveLength(1);
   });
 });

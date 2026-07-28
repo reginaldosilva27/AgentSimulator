@@ -19,9 +19,12 @@ import {
   llmBaseCapacityFor,
   llmCostPerCallUsd,
 } from "./components";
+import { CHALLENGES } from "./challenges";
+import { statusOf, summarise } from "./progress";
 import { EXAMPLES } from "./examples";
 import { formatLatency, formatQps } from "./format";
-import { computeMetrics, endToEndLatencyMs, llmCost, rpsOf } from "./model";
+import { llmCost, rpsOf } from "./model";
+import { measureDesign } from "./slo";
 import { Palette } from "./Palette";
 import { useArena } from "./store";
 import { allTopicsFor } from "../learn/content";
@@ -38,7 +41,10 @@ export function ArenaPage() {
   const thinkTimeSec = useArena((s) => s.thinkTimeSec);
   const offeredLoad = useArena((s) => s.offeredLoad);
   const exampleId = useArena((s) => s.exampleId);
+  const challengeId = useArena((s) => s.challengeId);
+  const progress = useArena((s) => s.progress);
   const callShape = useArena((s) => s.callShape);
+  const faults = useArena((s) => s.faults);
   const { setUsers, setThinkTime, setCallShape, clear, loadExample } = useArena.getState();
   // 117 — the payload popover (transient UI state).
   const [payloadOpen, setPayloadOpen] = useState(false);
@@ -49,20 +55,23 @@ export function ArenaPage() {
   // 108 — plus the total shed rate: when anything saturates, the header tells the
   // shed story instead of a fictional (0.99-clamped) latency figure.
   // 111 — the LLM bill is two-sided: provisioned (billed even idle) + usage.
+  // 129 — these come from `measureDesign`, the SINGLE definition of the four
+  // aggregate figures, so the header and the Objectives panel can never disagree
+  // (it replaced an inline shed sum that lived only here).
   const { e2eMs, cost, totalShed } = useMemo(() => {
     if (nodes.length === 0) {
       return { e2eMs: 0, cost: { provisionedPerHour: 0, usagePerHour: 0 }, totalShed: 0 };
     }
-    const design = { nodes, edges, callShape };
-    const metrics = computeMetrics(design, offeredLoad);
-    let shed = 0;
-    for (const n of nodes) shed += metrics.get(n.id)!.shedRps;
+    const design = { nodes, edges, callShape, faults };
+    const m = measureDesign(design, users, thinkTimeSec);
     return {
-      e2eMs: endToEndLatencyMs(design, offeredLoad),
-      cost: llmCost(design, offeredLoad),
-      totalShed: shed,
+      e2eMs: m.e2eLatencyMs,
+      // The header shows the two-sided LLM bill (111), which `measureDesign`
+      // reports as one total — so keep the split here.
+      cost: llmCost(design, m.offeredLoad),
+      totalShed: m.shedRps,
     };
-  }, [nodes, edges, offeredLoad, callShape]);
+  }, [nodes, edges, callShape, faults, users, thinkTimeSec]);
 
   const fmtUsd = (v: number) =>
     v >= 100 ? Math.round(v).toLocaleString(locale) : v.toFixed(2);
@@ -251,6 +260,61 @@ export function ArenaPage() {
             </option>
           ))}
         </select>
+        {/* 130 — the challenge picker, beside Examples. Selecting the empty option
+            leaves challenge mode and restores the stashed sandbox (AC5). */}
+        <select
+          aria-label={t.arena.challenge.nav}
+          value={challengeId ?? ""}
+          onChange={(ev) => {
+            const id = ev.target.value;
+            if (id) useArena.getState().enterChallenge(id);
+            else useArena.getState().exitChallenge();
+          }}
+          className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel-2)] px-2.5 py-1 text-[11px] text-[var(--color-text-soft)] transition hover:border-[var(--color-sky)]"
+        >
+          <option value="">{challengeId ? t.arena.challenge.sandbox : t.arena.challenge.pick}</option>
+          {CHALLENGES.map((c) => {
+            const status = statusOf(progress, c.id);
+            // 132 — the badge is a record of having done it, not of the last try.
+            const badge = status === "solved" ? "✓ " : status === "attempted" ? "• " : "";
+            return (
+              <option key={c.id} value={c.id}>
+                {badge}
+                {t.arena.challenge.difficulty[c.difficulty]} · {c.title[lang]}
+              </option>
+            );
+          })}
+        </select>
+        {/* 132 — "N of M solved", and a progress reset kept DISTINCT from the
+            canvas reset: clearing a canvas is routine, deleting a record of
+            learning is not, and one button must never do both. */}
+        {(() => {
+          const { solved, total } = summarise(
+            progress,
+            CHALLENGES.map((c) => c.id),
+          );
+          if (solved === 0) return null;
+          return (
+            <span
+              className="whitespace-nowrap text-[11px] text-[var(--color-ok)]"
+              title={t.arena.progress.localOnly}
+            >
+              {t.arena.progressSummary(solved, total)}
+              <button
+                onClick={() => {
+                  if (window.confirm(t.arena.progress.resetConfirm)) {
+                    useArena.getState().resetProgress();
+                  }
+                }}
+                title={t.arena.progress.reset}
+                aria-label={t.arena.progress.reset}
+                className="ml-1 text-[var(--color-muted)] transition hover:text-[var(--color-rose-soft)]"
+              >
+                ↺
+              </button>
+            </span>
+          );
+        })()}
         <button
           onClick={() => clear()}
           className="rounded-lg border border-[var(--color-line)] px-2.5 py-1 text-[11px] text-[var(--color-text-soft)] transition hover:border-[var(--color-rose)] hover:text-[var(--color-rose-soft)]"

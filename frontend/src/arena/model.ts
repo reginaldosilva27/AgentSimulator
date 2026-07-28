@@ -10,6 +10,7 @@
 // benchmarks in `components.ts`, not a live load test. It never sends traffic
 // anywhere and emits no TraceEvents.
 
+import { applyFaults, quotaCutFactorFor, faultsOn, type ArenaFault } from "./chaos";
 import {
   BENCHMARKS,
   CONCURRENCY_BUDGET_PER_UNIT,
@@ -51,6 +52,13 @@ export interface ArenaNodeSpec {
   /** 128 — LLM only: which model SKU runs here (latency + cost, not capacity).
    *  Absent resolves to the `mini` anchor, so pre-128 designs are unchanged. */
   modelTier?: ModelTier;
+  /** 131 — DERIVED, set only by `chaos.ts::applyFaults`: scales this node's base
+   *  latency (a latency spike / a degraded dependency). Absent = 1. Never
+   *  authored by hand or persisted — it is a fault's footprint, not a knob. */
+  latencyMultiplier?: number;
+  /** 131 — DERIVED, as above: scales this node's capacity (a degraded
+   *  dependency you cannot scale). Absent = 1. */
+  capacityMultiplier?: number;
 }
 
 export interface ArenaEdge {
@@ -68,6 +76,10 @@ export interface ArenaDesign {
   /** 117 — the workload's call shape (tokens per LLM call). Absent = the stated
    *  default (~2k in + 500 out), which reproduces pre-117 behavior exactly. */
   callShape?: CallShape;
+  /** 131 — injected faults. Additive exactly like `callShape`: absent or empty
+   *  reproduces pre-131 behavior byte-for-byte, and because every derived helper
+   *  takes a `design`, all of them inherit chaos with no signature change. */
+  faults?: ArenaFault[];
 }
 
 export type NodeStatus = "healthy" | "warning" | "critical" | "unreachable";
@@ -93,6 +105,11 @@ export interface NodeMetrics {
   /** 114 — fraction of an LLM pool's capacity the regional quota allows (1 when
    *  the region is under quota; < 1 squeezes every pool in the region equally). */
   quotaFactor: number;
+  /** 131 — a fault is applied to this box (its own, or its region's outage). */
+  faulted: boolean;
+  /** 131 — set when this box is starved because an UPSTREAM box is down: the id of
+   *  the failure actually responsible, so the starved box is not blamed for it. */
+  starvedBy?: string;
   /** 125 — true when EVERY inbound path to this node crosses a queue: the work is
    *  drained off the request path, so its latency never reaches the user-facing
    *  turn and its overload is a BACKLOG, not a shed (429). A property of the
@@ -114,20 +131,32 @@ export function rpsOf(users: number, thinkTimeSec: number): number {
 /** Effective capacity of a node: benchmark × vertical size × horizontal replicas.
  *  117 — for LLM nodes the base is TPM ÷ tokens at the workload's call shape. */
 export function effectiveCapacity(
-  spec: Pick<ArenaNodeSpec, "kind" | "size" | "replicas">,
+  spec: Pick<ArenaNodeSpec, "kind" | "size" | "replicas"> & {
+    /** 131 — a degraded dependency's capacity cut (absent = 1). */
+    capacityMultiplier?: number;
+  },
   shape: CallShape = DEFAULT_CALL_SHAPE,
 ): number {
   const base = spec.kind === "llm" ? llmBaseCapacityFor(shape) : BENCHMARKS[spec.kind].baseCapacity;
-  const replicas = Math.max(1, spec.replicas);
-  return base * SIZE_MULTIPLIER[spec.size] * replicas;
+  // 131 — ZERO units is now legal and means "serves nothing" (a downed box). The
+  // old `Math.max(1, ...)` floor silently gave a dead node a unit of capacity.
+  const replicas = Math.max(0, spec.replicas);
+  const degraded = spec.capacityMultiplier ?? 1;
+  return base * SIZE_MULTIPLIER[spec.size] * replicas * degraded;
 }
 
-/** 117/128 — unloaded service latency: shape-derived for the LLM (scaled by its
- *  model tier), benchmark elsewhere. */
-function baseLatencyMsOf(kind: ArenaKind, shape: CallShape, tier?: ModelTier): number {
-  return kind === "llm"
-    ? llmBaseLatencyMsFor(shape, tier ?? DEFAULT_MODEL_TIER)
-    : BENCHMARKS[kind].baseLatencyMs;
+/**
+ * 117/128 — unloaded service latency: shape-derived for the LLM (scaled by its
+ * model tier), benchmark elsewhere.
+ * 131 — plus the node's fault multiplier (absent = 1). Takes the SPEC rather than
+ * the kind, because the figure now depends on the node, not just its kind.
+ */
+function specLatencyMsOf(spec: ArenaNodeSpec, shape: CallShape): number {
+  const base =
+    spec.kind === "llm"
+      ? llmBaseLatencyMsFor(shape, spec.modelTier ?? DEFAULT_MODEL_TIER)
+      : BENCHMARKS[spec.kind].baseLatencyMs;
+  return base * (spec.latencyMultiplier ?? 1);
 }
 
 /**
@@ -183,21 +212,26 @@ export function routingTaxFor(
 export function quotaFactorsFor(design: ArenaDesign): Map<string, number> {
   // 117 — the quota is a TOKEN budget: both a pool's capacity and the regional
   // cap are TPM ÷ tokens at the workload's call shape.
-  const shape = design.callShape ?? DEFAULT_CALL_SHAPE;
-  const quotaRps = regionalLlmQuotaRpsFor(shape);
+  // 131 — a `quotaCut` fault scales a region's ceiling BEFORE 114's proportional
+  // squeeze, so the cut is a small extension of an existing rule, not new math.
+  const faulted = applyFaults(design);
+  const shape = faulted.callShape ?? DEFAULT_CALL_SHAPE;
+  const baseQuotaRps = regionalLlmQuotaRpsFor(shape);
   const rawByRegion = new Map<string, number>();
-  for (const sp of design.nodes) {
+  for (const sp of faulted.nodes) {
     if (sp.kind !== "llm") continue;
     const region = sp.region ?? "unassigned";
     rawByRegion.set(region, (rawByRegion.get(region) ?? 0) + effectiveCapacity(sp, shape));
   }
   const factors = new Map<string, number>();
-  for (const sp of design.nodes) {
+  for (const sp of faulted.nodes) {
     if (sp.kind !== "llm") {
       factors.set(sp.id, 1);
       continue;
     }
-    const raw = rawByRegion.get(sp.region ?? "unassigned")!;
+    const region = sp.region ?? "unassigned";
+    const raw = rawByRegion.get(region)!;
+    const quotaRps = baseQuotaRps * quotaCutFactorFor(design, region);
     factors.set(sp.id, raw > quotaRps ? quotaRps / raw : 1);
   }
   return factors;
@@ -231,7 +265,12 @@ function statusFor(utilization: number): Exclude<NodeStatus, "unreachable"> {
  *    its miss fraction (1 - hitRatio);
  *  - nodes trapped in a cycle never reach in-degree 0 → marked `unreachable`.
  */
-export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<string, NodeMetrics> {
+export function computeMetrics(rawDesign: ArenaDesign, offeredLoad: number): Map<string, NodeMetrics> {
+  // 131 — the fault PRE-PASS: everything below runs on the derived design, so the
+  // whole model inherits chaos with no second code path. With no faults this is
+  // the identity (AC9), and `rawDesign` is only kept to answer "is THIS box
+  // faulted?" for the UI marker.
+  const design = applyFaults(rawDesign);
   // 117 — the workload call shape drives the LLM tier's capacity + latency.
   const shape = design.callShape ?? DEFAULT_CALL_SHAPE;
   const nodes = new Map(design.nodes.map((sp) => [sp.id, sp]));
@@ -268,6 +307,7 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
   for (const [id, deg] of remaining) if (deg === 0) queue.push(id);
 
   const inboundOf = new Map<string, number>(); // effective inbound (× callsPerRequest)
+  const outOf = new Map<string, number>(); // 131 — throughput, for the starvation rule
   const order: string[] = [];
   while (queue.length) {
     const id = queue.shift()!;
@@ -277,6 +317,7 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
     const inbound = arriving.get(id)! * Math.max(1, spec.callsPerRequest ?? 1);
     inboundOf.set(id, inbound);
     const out = Math.min(inbound, capacity);
+    outOf.set(id, out);
 
     const kids = childrenOf.get(id)!;
     if (kids.length) {
@@ -309,11 +350,32 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
     if (allViaQueue) asyncSet.add(id);
   }
 
+  // 131 AC2 — STARVATION: a node whose every inbound path is dead (all parents pass
+  // on nothing) carries no honest traffic, so it reads `unreachable` rather than a
+  // misleading "healthy at 0%". Walked in topological order, so `starvedBy` can
+  // name the failure ACTUALLY responsible — the first downed ancestor, not the
+  // innocent box in front of it.
+  const starvedBy = new Map<string, string>();
+  for (const id of order) {
+    const parents = parentsOf.get(id)!;
+    if (parents.length === 0) continue;
+    if (parents.some((pid) => (outOf.get(pid) ?? 0) > 0)) continue; // a live path survives
+    // Every path is dead: inherit the deepest named cause, else blame the parent
+    // that is itself down/empty.
+    const cause =
+      parents.map((pid) => starvedBy.get(pid)).find((c): c is string => !!c) ??
+      parents.find((pid) => (outOf.get(pid) ?? 0) === 0);
+    if (cause) starvedBy.set(id, cause);
+  }
+
   const metrics = new Map<string, NodeMetrics>();
   for (const sp of design.nodes) {
     const routingTax = taxOf.get(sp.id)!;
     const quotaFactor = quotaOf.get(sp.id)!;
     const capacity = effectiveCapacity(sp, shape) * (1 - routingTax) * quotaFactor;
+    // 131 — read the fault marker off the RAW design: `applyFaults` has already
+    // erased the fault into plain spec values by this point.
+    const faulted = faultsOn(rawDesign, sp.id).length > 0;
     if (!reached.has(sp.id)) {
       // Trapped in a cycle — no honest capacity credit (mirrors the reference tool).
       metrics.set(sp.id, {
@@ -322,28 +384,35 @@ export function computeMetrics(design: ArenaDesign, offeredLoad: number): Map<st
         throughput: 0,
         capacity,
         utilization: 0,
-        latencyMs: baseLatencyMsOf(sp.kind, shape, sp.modelTier),
+        latencyMs: specLatencyMsOf(sp, shape),
         status: "unreachable",
         bottleneck: false,
         routingTax,
         quotaFactor,
+        faulted,
         async: false,
       });
       continue;
     }
     const inbound = inboundOf.get(sp.id)!;
-    const utilization = capacity > 0 ? inbound / capacity : 0;
+    // 131 — capacity 0 with work arriving is FULLY saturated, not idle: the old
+    // `capacity > 0 ? … : 0` reported a downed box as 0% utilized. Reported as 1
+    // (not Infinity) so headroom and every other aggregate stay finite.
+    const utilization = capacity > 0 ? inbound / capacity : inbound > 0 ? 1 : 0;
+    const starved = starvedBy.get(sp.id);
     metrics.set(sp.id, {
       arriving: inbound,
       shedRps: Math.max(0, inbound - capacity),
       throughput: Math.min(inbound, capacity),
       capacity,
       utilization,
-      latencyMs: queueLatency(baseLatencyMsOf(sp.kind, shape, sp.modelTier), utilization),
-      status: statusFor(utilization),
-      bottleneck: utilization > 1,
+      latencyMs: queueLatency(specLatencyMsOf(sp, shape), utilization),
+      status: starved !== undefined ? "unreachable" : statusFor(utilization),
+      bottleneck: utilization > 1 || (capacity === 0 && inbound > 0),
       routingTax,
       quotaFactor,
+      faulted,
+      ...(starved !== undefined ? { starvedBy: starved } : {}),
       async: asyncSet.has(sp.id),
     });
   }

@@ -17,7 +17,9 @@
 
 import type { Lang } from "../i18n";
 import { DEFAULT_CALL_SHAPE, DEFAULT_HIT_RATIO } from "./components";
-import { equilibriumRps, type ArenaEdge } from "./model";
+import { COL, ROW, edge, node } from "./designKit";
+import { equilibriumRps } from "./model";
+import { DEFAULT_SLO_TARGETS } from "./slo";
 import type { ArenaNode, ArenaState } from "./store";
 
 export interface ArenaExample {
@@ -38,26 +40,8 @@ export interface ArenaExample {
   build: () => Pick<ArenaState, "nodes" | "edges" | "users" | "thinkTimeSec">;
 }
 
-/** Terse node factory: kind + position + optional scaling overrides. 116 — every
- *  infrastructure node defaults to East US (the client is the users, no region). */
-function node(
-  id: string,
-  kind: ArenaNode["kind"],
-  x: number,
-  y: number,
-  extra: Partial<ArenaNode> = {},
-): ArenaNode {
-  const region = kind === "client" ? {} : { region: "us-east" as const };
-  return { id, kind, size: "medium", replicas: 1, x, y, ...region, ...extra };
-}
-const edge = (source: string, target: string): ArenaEdge => ({
-  id: `${source}-${target}`,
-  source,
-  target,
-});
-
-const COL = 210; // horizontal spacing between tiers
-const ROW = 150; // vertical spacing between branches
+// 130 — the node/edge factories and the spacing constants now live in
+// `designKit.ts`, shared with the challenge library (behaviour-preserving move).
 
 const RAW_EXAMPLES: ArenaExample[] = [
   {
@@ -637,5 +621,12 @@ export function defaultDesign(): ArenaState {
     ),
     dismissedNudges: [],
     callShape: DEFAULT_CALL_SHAPE,
+    // 129 — the measured defaults: this sample is chosen to FAIL latency +
+    // headroom (and meet shed, honestly), so the panel teaches on first visit.
+    sloTargets: { ...DEFAULT_SLO_TARGETS },
+    // 130 — a first visit lands in the free sandbox, never mid-challenge.
+    challengeId: null,
+    sandbox: null,
+    referenceShown: false,
   };
 }

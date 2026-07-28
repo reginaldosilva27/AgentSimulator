@@ -182,6 +182,93 @@ export interface Strings {
     noteClear: string;
     noteCounter: (n: number) => string;
     edgePanelTitle: string; // heading of the selected-connection panel
+    // 129-arena-slo-engine — the objectives panel: per-axis target vs actual, a
+    // met/✗ verdict, and the culprit + remediation hint on a failed row.
+    slo: {
+      title: string;
+      hint: string;
+      verdictAllMet: string;
+      target: string;
+      actual: string;
+      off: string;
+      track: string;
+      untrack: string;
+      empty: string;
+      ceilingNote: string; // latency past the model's clamp: the figure is a floor
+      metric: { latency: string; headroom: string; shed: string; cost: string };
+      unit: { latency: string; headroom: string; shed: string; cost: string };
+    };
+    sloVerdictPartial: (met: number, total: number) => string;
+    sloCulprit: (name: string) => string;
+    // 130-arena-challenges — the challenge library: picker, brief, locked givens,
+    // verdict, reference reveal.
+    challenge: {
+      nav: string;
+      pick: string;
+      sandbox: string; // the "no challenge" option in the picker
+      brief: string;
+      given: string;
+      lockedHint: string;
+      solved: string;
+      showReference: string;
+      referenceHint: string;
+      referenceShown: string;
+      exit: string;
+      exitHint: string;
+      paletteLimited: string;
+      difficulty: { easy: string; medium: string; hard: string };
+    };
+    challengeNotYet: (met: number, total: number) => string;
+    // 131-arena-chaos — failure injection: the catalog, the active list, honesty.
+    chaos: {
+      title: string;
+      hint: string;
+      apply: string;
+      selectFirst: string;
+      active: string;
+      none: string;
+      remove: string;
+      clearAll: string;
+      transient: string;
+      locked: string;
+      magnitude: string;
+    };
+    chaosStarved: (name: string) => string;
+    chaosFaultOn: (fault: string, target: string) => string;
+    // 132-arena-attempts — attempt history, per-challenge status, best solution.
+    progress: {
+      history: string;
+      noAttempts: string;
+      best: string;
+      passed: string;
+      restore: string;
+      restored: string;
+      assisted: string;
+      withFaults: string;
+      figuresFromThen: string;
+      localOnly: string;
+      reset: string;
+      resetConfirm: string;
+      status: { untried: string; attempted: string; solved: string };
+    };
+    progressSummary: (solved: number, total: number) => string;
+    progressAttemptLabel: (seq: number) => string;
+    progressFailed: (met: number, total: number) => string;
+    // 133-arena-ai-judge — the qualitative design critique (the one backend call).
+    judge: {
+      ask: string;
+      running: string;
+      cancel: string;
+      rigorous: string;
+      pragmatic: string;
+      agreed: string;
+      framing: string;
+      unavailable: string;
+      demoUnavailable: string;
+      rateLimited: string;
+      failed: string;
+      retry: string;
+    };
   };
   // 058-online-demo-mode: the backend-less GitHub Pages showcase build.
   demo: {
@@ -1458,6 +1545,92 @@ const en: Strings = {
     noteClear: "Clear note",
     noteCounter: (n) => `${n}/280`,
     edgePanelTitle: "Connection",
+    slo: {
+      title: "Objectives",
+      hint: "Targets checked against the capacity model — not measurements. An untracked objective can't affect the verdict.",
+      verdictAllMet: "All objectives met",
+      target: "Target",
+      actual: "Actual",
+      off: "Not tracked",
+      track: "Track this objective",
+      untrack: "Stop tracking",
+      empty: "Add a component to measure something.",
+      ceilingNote: "At the model's ceiling — treat this as a floor, and read the dropped-requests row.",
+      metric: {
+        latency: "End-to-end latency",
+        headroom: "Headroom",
+        shed: "Dropped requests",
+        cost: "Cost per hour",
+      },
+      unit: { latency: "ms", headroom: "%", shed: "req/s", cost: "USD/h" },
+    },
+    sloVerdictPartial: (met, total) => `${met} of ${total} objectives met`,
+    sloCulprit: (name) => `Limited by: ${name}`,
+    challenge: {
+      nav: "Challenges",
+      pick: "Pick a challenge",
+      sandbox: "Free sandbox",
+      brief: "The ask",
+      given: "Set by the problem",
+      lockedHint: "The problem sets the load — your job is the architecture.",
+      solved: "Solved",
+      showReference: "Show reference solution",
+      referenceHint: "One design that meets every objective — not the only one.",
+      referenceShown: "Reference solution shown",
+      exit: "Leave challenge",
+      exitHint: "Your sandbox design is kept.",
+      paletteLimited: "This challenge allows only some components.",
+      difficulty: { easy: "Easy", medium: "Medium", hard: "Hard" },
+    },
+    challengeNotYet: (met, total) => `Not yet — ${met} of ${total} objectives met`,
+    chaos: {
+      title: "Chaos",
+      hint: "The same model, re-evaluated with a component removed or degraded — not a live outage.",
+      apply: "Apply to selected",
+      selectFirst: "Select a component first",
+      active: "Active faults",
+      none: "No faults applied",
+      remove: "Remove",
+      clearAll: "Clear all faults",
+      transient: "Faults are not saved — a reload restores the intact design.",
+      locked: "This fault is part of the challenge.",
+      magnitude: "How much",
+    },
+    chaosStarved: (name) => `Nothing reaches it — ${name} is down upstream.`,
+    chaosFaultOn: (fault, target) => `${fault} · ${target}`,
+    progress: {
+      history: "Attempts",
+      noAttempts: "No attempts yet",
+      best: "Best so far",
+      passed: "Met every objective",
+      restore: "Load this design",
+      restored: "Loaded — the challenge is still active.",
+      assisted: "Reference solution was shown",
+      withFaults: "Solved with faults applied",
+      figuresFromThen: "Figures as measured at the time of the attempt.",
+      localOnly: "Progress is kept in this browser only.",
+      reset: "Reset progress",
+      resetConfirm: "Delete every recorded attempt? This cannot be undone.",
+      status: { untried: "Not tried", attempted: "Attempted", solved: "Solved" },
+    },
+    progressSummary: (solved, total) => `${solved} of ${total} solved`,
+    progressAttemptLabel: (seq) => `Attempt #${seq}`,
+    progressFailed: (met, total) => `${met} of ${total} objectives`,
+    judge: {
+      ask: "Ask for a review",
+      running: "Reviewing your design…",
+      cancel: "Cancel",
+      rigorous: "The rigorous reviewer",
+      pragmatic: "The pragmatic reviewer",
+      agreed: "What they agree on",
+      framing:
+        "A language model's opinion about design quality. Whether the objectives are met is decided by the capacity model, not here.",
+      unavailable: "No model provider is configured for this instance — the review is unavailable.",
+      demoUnavailable: "The online demo has no backend, so the review is unavailable here.",
+      rateLimited: "Too many reviews just now — try again in a minute.",
+      failed: "The review could not be completed.",
+      retry: "Try again",
+    },
   },
   demo: {
     bannerLead: "Demo mode — sample questions only, replaying real captured runs.",
@@ -2852,6 +3025,94 @@ const pt: Strings = {
     noteClear: "Limpar nota",
     noteCounter: (n) => `${n}/280`,
     edgePanelTitle: "Conexão",
+    slo: {
+      title: "Metas",
+      hint: "Metas verificadas contra o modelo de capacidade — não são medições. Uma meta não acompanhada não afeta o veredito.",
+      verdictAllMet: "Todas as metas atingidas",
+      target: "Meta",
+      actual: "Atual",
+      off: "Não acompanhada",
+      track: "Acompanhar esta meta",
+      untrack: "Parar de acompanhar",
+      empty: "Adicione um componente para medir algo.",
+      ceilingNote:
+        "No teto do modelo — trate como piso e leia a linha de requisições descartadas.",
+      metric: {
+        latency: "Latência ponta a ponta",
+        headroom: "Folga",
+        shed: "Requisições descartadas",
+        cost: "Custo por hora",
+      },
+      unit: { latency: "ms", headroom: "%", shed: "req/s", cost: "USD/h" },
+    },
+    sloVerdictPartial: (met, total) => `${met} de ${total} metas atingidas`,
+    sloCulprit: (name) => `Limitado por: ${name}`,
+    challenge: {
+      nav: "Desafios",
+      pick: "Escolha um desafio",
+      sandbox: "Sandbox livre",
+      brief: "O pedido",
+      given: "Definido pelo desafio",
+      lockedHint: "O desafio define a carga — seu trabalho é a arquitetura.",
+      solved: "Resolvido",
+      showReference: "Ver solução de referência",
+      referenceHint: "Um desenho que atinge todas as metas — não o único.",
+      referenceShown: "Solução de referência mostrada",
+      exit: "Sair do desafio",
+      exitHint: "Seu desenho do sandbox é preservado.",
+      paletteLimited: "Este desafio permite apenas alguns componentes.",
+      difficulty: { easy: "Fácil", medium: "Médio", hard: "Difícil" },
+    },
+    challengeNotYet: (met, total) => `Ainda não — ${met} de ${total} metas atingidas`,
+    chaos: {
+      title: "Caos",
+      hint: "O mesmo modelo, reavaliado com um componente removido ou degradado — não é uma queda real.",
+      apply: "Aplicar ao selecionado",
+      selectFirst: "Selecione um componente primeiro",
+      active: "Falhas ativas",
+      none: "Nenhuma falha aplicada",
+      remove: "Remover",
+      clearAll: "Remover todas as falhas",
+      transient: "Falhas não são salvas — recarregar restaura o desenho intacto.",
+      locked: "Esta falha faz parte do desafio.",
+      magnitude: "Quanto",
+    },
+    chaosStarved: (name) => `Nada chega até aqui — ${name} está fora, acima no caminho.`,
+    chaosFaultOn: (fault, target) => `${fault} · ${target}`,
+    progress: {
+      history: "Tentativas",
+      noAttempts: "Nenhuma tentativa ainda",
+      best: "Melhor até agora",
+      passed: "Atingiu todas as metas",
+      restore: "Carregar este desenho",
+      restored: "Carregado — o desafio continua ativo.",
+      assisted: "A solução de referência foi mostrada",
+      withFaults: "Resolvido com falhas aplicadas",
+      figuresFromThen: "Números como medidos no momento da tentativa.",
+      localOnly: "O progresso fica apenas neste navegador.",
+      reset: "Zerar progresso",
+      resetConfirm: "Apagar todas as tentativas registradas? Isso não pode ser desfeito.",
+      status: { untried: "Não tentado", attempted: "Tentado", solved: "Resolvido" },
+    },
+    progressSummary: (solved, total) => `${solved} de ${total} resolvidos`,
+    progressAttemptLabel: (seq) => `Tentativa #${seq}`,
+    progressFailed: (met, total) => `${met} de ${total} metas`,
+    judge: {
+      ask: "Pedir uma revisão",
+      running: "Revisando seu desenho…",
+      cancel: "Cancelar",
+      rigorous: "O revisor rigoroso",
+      pragmatic: "O revisor pragmático",
+      agreed: "No que eles concordam",
+      framing:
+        "A opinião de um modelo de linguagem sobre a qualidade do desenho. Se as metas foram atingidas, quem decide é o modelo de capacidade, não aqui.",
+      unavailable:
+        "Nenhum provedor de modelo está configurado nesta instância — a revisão não está disponível.",
+      demoUnavailable: "A demo online não tem backend, então a revisão não está disponível aqui.",
+      rateLimited: "Muitas revisões agora — tente de novo em um minuto.",
+      failed: "Não foi possível concluir a revisão.",
+      retry: "Tentar de novo",
+    },
   },
   demo: {
     bannerLead: "Modo demo — apenas perguntas de exemplo, reproduzindo execuções reais capturadas.",

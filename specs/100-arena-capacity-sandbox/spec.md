@@ -55,6 +55,21 @@ itself a teaching point.
 
 ## Non-goals
 
+> **Note (2026-07-27, added by 133-arena-ai-judge).** Two of the non-goals below have since
+> been delivered, and one of them is **partly superseded** — recorded here as a pointer, not
+> a rewrite (specs are append-only):
+>
+> - *"No pre-defined challenges"* → delivered by **130-arena-challenges** (with 129's SLO
+>   engine, 131's chaos and 132's attempt history).
+> - *"No AI judge / scoring"* → delivered by **133-arena-ai-judge**.
+> - *"No backend … the Arena is frontend-only computation"* → **superseded in exactly one
+>   place** by 133: a single stateless route (`POST /api/arena/judge`) that reads no
+>   database, writes nothing, and emits no `TraceEvent`. A language judge cannot be mocked
+>   without violating §3, so it needs a real server-side model call. Everything else on the
+>   page — the whole capacity model — remains pure frontend computation, and the rest of this
+>   non-goal (**no new `Stage`, no `TraceEvent`, no protocol change, no DB table**) still
+>   holds exactly as written.
+
 - **No pre-defined challenges / scenarios** with target-scale goals (deferred — future
   spec). v1 is a free sandbox.
 - **No AI judge / scoring** of the design (deferred — future spec).

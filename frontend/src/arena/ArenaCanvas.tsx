@@ -55,6 +55,11 @@ import { autoLayout, measuredSizeOf } from "./layout";
 import { learnTopicsFor } from "./learnLinks";
 import { fanoutNudges } from "./nudges";
 import { ARENA_DND_MIME } from "./Palette";
+import { ChallengePanel } from "./ChallengePanel";
+import { AttemptHistory } from "./AttemptHistory";
+import { ChaosPanel } from "./ChaosPanel";
+import { JudgePanel } from "./JudgePanel";
+import { SloPanel } from "./SloPanel";
 import { NOTE_MAX, useArena } from "./store";
 import { allTopicsFor } from "../learn/content";
 import { useLearnTarget } from "../lib/learnTarget";
@@ -109,15 +114,23 @@ export function ArenaCanvas() {
     [nodes, edges, dismissedNudges],
   );
 
+  // 131 — faults are transient store state, threaded into the design so every
+  // derived readout (metrics, latency, cost, equilibrium, the 129 verdict) sees them.
+  const faults = useArena((s) => s.faults);
+  const byId = useCallback(
+    (id: string) => nodes.find((n) => n.id === id),
+    [nodes],
+  );
+
   const metrics = useMemo(
-    () => computeMetrics({ nodes, edges, callShape }, offeredLoad),
-    [nodes, edges, callShape, offeredLoad],
+    () => computeMetrics({ nodes, edges, callShape, faults }, offeredLoad),
+    [nodes, edges, callShape, faults, offeredLoad],
   );
 
   // 118 — held streams per node (113's Little's-Law figure), now a status signal.
   const held = useMemo(
-    () => heldInFlight({ nodes, edges, callShape }, offeredLoad),
-    [nodes, edges, callShape, offeredLoad],
+    () => heldInFlight({ nodes, edges, callShape, faults }, offeredLoad),
+    [nodes, edges, callShape, faults, offeredLoad],
   );
 
   // 119/122 — the loaded sample's explanations, now a side-panel list instead of
@@ -169,6 +182,9 @@ export function ArenaCanvas() {
             connectionWall: budget !== null && heldHere !== null && heldHere > budget,
             highlight: n.id === highlightId,
             note: n.note,
+            // 131 — the fault / starvation markers.
+            faulted: m.faulted,
+            starvedBy: m.starvedBy ? KIND_META[byId(m.starvedBy)?.kind ?? "backend"].label[lang] : undefined,
             // 125 — drained off the request path (behind a queue): async badge +
             // backlog wording instead of a 429 shed.
             async: m.async,
@@ -335,9 +351,15 @@ export function ArenaCanvas() {
         </div>
       )}
 
-      {/* 122 — the loaded sample's explanations as one docked list (bottom-right,
-          clear of the scale/edge panels top-right and the nudges top-left). */}
-      {callouts.length > 0 && <CalloutPanel callouts={callouts} onHighlight={setHighlightId} />}
+      {/* 122 + 129 — one docked bottom-right surface (clear of the scale/edge
+          panels top-right and the nudges top-left), now TABBED: the loaded
+          sample's notes and the objectives checklist share it, so the canvas
+          keeps its full width. 130 adds the challenge Brief as a third tab. */}
+      <BottomPanel
+        callouts={callouts}
+        onHighlight={setHighlightId}
+        hasNodes={nodes.length > 0}
+      />
 
       {selected && <ScalePanel id={selected.id} />}
       {selectedEdgeId && <EdgePanel id={selectedEdgeId} />}
@@ -346,55 +368,111 @@ export function ArenaCanvas() {
 }
 
 /**
- * 122 — the example-notes panel: the preset's callouts as a compact list, each
- * entry named after its component. Hover/focus lights the matching node up on
- * the canvas (the spatial link the 119 anchored bubbles carried). ✕ keeps the
- * 119 semantics: hides the notes for this sample; re-loading shows them again.
- * Exported for direct testing.
+ * 122 + 129 — the docked bottom-right surface, shared by the example notes and
+ * the objectives checklist as TABS so neither eats canvas width.
+ *
+ * The `aside`'s accessible name is the ACTIVE tab's title, and Notes is the
+ * default whenever a preset's callouts exist — which is both the right reading
+ * order (you loaded a sample to read it) and what keeps 122's contract intact.
+ * With no callouts, Objectives is the only tab. Exported for direct testing.
  */
-export function CalloutPanel({
+type TabId = "brief" | "notes" | "slo" | "chaos" | "attempts" | "judge";
+
+export function BottomPanel({
   callouts,
   onHighlight,
+  hasNodes,
 }: {
   callouts: Array<{ nodeId: string; label: string; text: string }>;
   onHighlight: (nodeId: string | null) => void;
+  hasNodes: boolean;
 }) {
   const t = useT();
+  const [picked, setPicked] = useState<TabId | null>(null);
+  // 130 — a challenge's Brief takes the front tab: it is the reason the user is
+  // looking at this canvas at all.
+  const inChallenge = useArena((s) => s.challengeId) !== null;
+
+  const tabs: Array<{ id: TabId; title: string }> = [
+    ...(inChallenge ? [{ id: "brief" as const, title: t.arena.challenge.brief }] : []),
+    ...(callouts.length > 0 ? [{ id: "notes" as const, title: t.arena.calloutsTitle }] : []),
+    ...(hasNodes ? [{ id: "slo" as const, title: t.arena.slo.title }] : []),
+    ...(hasNodes ? [{ id: "chaos" as const, title: t.arena.chaos.title }] : []),
+    // 132 — the history only exists inside a challenge.
+    ...(inChallenge ? [{ id: "attempts" as const, title: t.arena.progress.history }] : []),
+    // 133 — the judge works in the sandbox too, against the user's own 129 targets,
+    // so it never critiques in a vacuum.
+    ...(hasNodes ? [{ id: "judge" as const, title: t.arena.judge.ask }] : []),
+  ];
+  if (tabs.length === 0) return null;
+  const active = tabs.find((tab) => tab.id === picked) ?? tabs[0];
+
   return (
     <aside
-      aria-label={t.arena.calloutsTitle}
+      aria-label={active.title}
       className="absolute bottom-3 right-3 z-10 w-64 rounded-xl border border-[var(--color-line)] bg-[color-mix(in_srgb,var(--color-panel)_92%,transparent)] p-2.5 shadow-lg backdrop-blur-sm"
     >
       <div className="flex items-center justify-between gap-1.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-          {t.arena.calloutsTitle}
-        </span>
-        <button
-          aria-label={t.arena.calloutHide}
-          title={t.arena.calloutHide}
-          onClick={() => useArena.getState().hideCallouts()}
-          className="grid h-4 w-4 place-items-center rounded text-[9px] text-[var(--color-muted)] transition hover:text-[var(--color-ink)]"
-        >
-          ✕
-        </button>
-      </div>
-      <ul className="mt-1.5 flex max-h-56 flex-col gap-1.5 overflow-y-auto">
-        {callouts.map((c) => (
-          <li
-            key={c.nodeId}
-            tabIndex={0}
-            onMouseEnter={() => onHighlight(c.nodeId)}
-            onMouseLeave={() => onHighlight(null)}
-            onFocus={() => onHighlight(c.nodeId)}
-            onBlur={() => onHighlight(null)}
-            className="rounded-lg border border-transparent bg-[var(--color-panel-2)] p-1.5 text-[9.5px] leading-snug text-[var(--color-text-soft)] transition hover:border-[var(--color-sky)] focus:border-[var(--color-sky)] focus:outline-none"
+        <div role="tablist" className="flex min-w-0 gap-1.5">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              role="tab"
+              aria-selected={tab.id === active.id}
+              onClick={() => setPicked(tab.id)}
+              className={`truncate text-[10px] font-semibold uppercase tracking-wide transition ${
+                tab.id === active.id
+                  ? "text-[var(--color-ink)]"
+                  : "text-[var(--color-muted)] hover:text-[var(--color-text-soft)]"
+              }`}
+            >
+              {tab.title}
+            </button>
+          ))}
+        </div>
+        {active.id === "notes" && (
+          <button
+            aria-label={t.arena.calloutHide}
+            title={t.arena.calloutHide}
+            onClick={() => useArena.getState().hideCallouts()}
+            className="grid h-4 w-4 shrink-0 place-items-center rounded text-[9px] text-[var(--color-muted)] transition hover:text-[var(--color-ink)]"
           >
-            <span className="font-semibold text-[var(--color-sky-soft)]">{c.label}</span>
-            {" — "}
-            <span>{c.text}</span>
-          </li>
-        ))}
-      </ul>
+            ✕
+          </button>
+        )}
+      </div>
+
+      <div className="mt-1.5 max-h-56 overflow-y-auto">
+        {active.id === "brief" ? (
+          <ChallengePanel />
+        ) : active.id === "notes" ? (
+          <ul className="flex flex-col gap-1.5">
+            {callouts.map((c) => (
+              <li
+                key={c.nodeId}
+                tabIndex={0}
+                onMouseEnter={() => onHighlight(c.nodeId)}
+                onMouseLeave={() => onHighlight(null)}
+                onFocus={() => onHighlight(c.nodeId)}
+                onBlur={() => onHighlight(null)}
+                className="rounded-lg border border-transparent bg-[var(--color-panel-2)] p-1.5 text-[9.5px] leading-snug text-[var(--color-text-soft)] transition hover:border-[var(--color-sky)] focus:border-[var(--color-sky)] focus:outline-none"
+              >
+                <span className="font-semibold text-[var(--color-sky-soft)]">{c.label}</span>
+                {" — "}
+                <span>{c.text}</span>
+              </li>
+            ))}
+          </ul>
+        ) : active.id === "judge" ? (
+          <JudgePanel />
+        ) : active.id === "attempts" ? (
+          <AttemptHistory />
+        ) : active.id === "chaos" ? (
+          <ChaosPanel />
+        ) : (
+          <SloPanel onHighlight={onHighlight} />
+        )}
+      </div>
     </aside>
   );
 }

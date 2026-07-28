@@ -10,7 +10,9 @@
 import { useState } from "react";
 
 import { useLang, useT } from "../i18n";
+import { challengeById } from "./challenges";
 import { filterPalette, KIND_META, PALETTE_GROUPS, type ArenaKind } from "./components";
+import { useArena } from "./store";
 
 export const ARENA_DND_MIME = "application/agentsim-arena-kind";
 
@@ -36,8 +38,17 @@ export function Palette() {
   const t = useT();
   const lang = useLang((s) => s.lang);
   const [query, setQuery] = useState("");
+  // 130 AC8 — a challenge may restrict the palette. Applied AFTER 126's grouping +
+  // search so the two features compose; absent = the full catalog (the sandbox
+  // path is byte-for-byte unchanged).
+  const allowedKinds = useArena((s) => challengeById(s.challengeId)?.allowedKinds);
 
-  const groups = filterPalette(PALETTE_GROUPS, query, lang);
+  const grouped = filterPalette(PALETTE_GROUPS, query, lang);
+  const groups = allowedKinds
+    ? grouped
+        .map((g) => ({ ...g, kinds: g.kinds.filter((k) => allowedKinds.includes(k)) }))
+        .filter((g) => g.kinds.length > 0)
+    : grouped;
 
   return (
     <aside className="flex w-44 shrink-0 flex-col gap-1.5 overflow-y-auto border-r border-[var(--color-line)] bg-[color-mix(in_srgb,var(--color-panel)_55%,transparent)] p-2.5">

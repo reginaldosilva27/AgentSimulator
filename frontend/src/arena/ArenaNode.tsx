@@ -39,6 +39,19 @@ export interface ArenaNodeData extends Record<string, unknown> {
   /** 125 — drained off the request path (behind a queue): shows an "async" badge,
    *  and overload reads as a growing BACKLOG, not a 429 shed. */
   async?: boolean;
+  /** 131 — a fault is applied to this box (shows a ⚡ marker). */
+  faulted?: boolean;
+  /** 131 — starved because an upstream box is down: the NAME of the box actually
+   *  responsible, so this one is not blamed for someone else's failure. */
+  starvedBy?: string;
+}
+
+/** 131 — the marker a faulted / starved box projects, as a pure function so the
+ *  test never has to fight React Flow's a11y tree (the 117–119 gotcha). */
+export function faultMarkerFor(d: Pick<ArenaNodeData, "faulted" | "starvedBy">): string | null {
+  if (d.faulted) return "⚡";
+  if (d.starvedBy) return "⛔";
+  return null;
 }
 
 const STATUS_COLOR: Record<NodeStatus, string> = {
@@ -100,6 +113,17 @@ export function ArenaNode({ id, data, selected }: NodeProps) {
               title={t.arena.inflightInfo}
             >
               {t.arena.asyncBadge}
+            </span>
+          )}
+          {/* 131 — a fault marker: ⚡ this box is broken, ⛔ it is starved by an
+              upstream failure (and the tooltip names which one). */}
+          {faultMarkerFor(d) && (
+            <span
+              className="text-[10px] leading-none"
+              aria-label={d.faulted ? t.arena.chaos.title : t.arena.chaos.active}
+              title={d.starvedBy ? t.arena.chaosStarved(d.starvedBy) : t.arena.chaos.hint}
+            >
+              {faultMarkerFor(d)}
             </span>
           )}
           {/* 120 — a note marker: the box carries the architect's justification. */}

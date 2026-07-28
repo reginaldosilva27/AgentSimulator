@@ -102,6 +102,14 @@ class Settings(BaseSettings):
 
     # --- RAG ---
     rag_top_k: int = 4
+    # 133-arena-ai-judge: the judge spends real tokens on an unauthenticated
+    # endpoint, so it carries a per-process fixed-window cap. Process-local is the
+    # right granularity for a single-instance app (§8) and is NOT a multi-replica
+    # defence — see app/arena/ratelimit.py. 0 disables the judge entirely.
+    arena_judge_rate_limit: int = 20
+    arena_judge_rate_window_seconds: float = 60.0
+    # Optional model override for judging; None uses the instance default.
+    arena_judge_model: str | None = None
     chroma_dir: str = "app/data/chroma"
     corpus_dir: str = "app/data/corpus"
     # 072-chunking-strategies: the ingestion-time chunker. `recursive` (default) is

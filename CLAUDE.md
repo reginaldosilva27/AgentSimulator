@@ -122,6 +122,45 @@ CI (`.github/workflows/ci.yml`) runs `ruff check` + `pytest` (Python 3.12) on th
 - Config is read from `backend/.env` (see `.env.example`); `VITE_API_BASE` (build-time) points the frontend at the backend (empty = same origin, set in `docker-compose.yml`).
 - **Bilingual by default:** any new user-facing text must be added in both English and Portuguese (`{ en, pt }`) — see the i18n rule above.
 
+**The Arena is a second page, and a different kind of honesty (100 → 133).** Beside the
+Simulator and Learn sits **Arena** (`frontend/src/arena/`): a drag-and-drop **capacity
+sandbox** that answers "and when this has 100k users, where does it break?" It is an
+**analytical model**, not a load test — deterministic arithmetic over stated benchmarks,
+labelled as an estimate (§3). `model.ts` is the pure core (`computeMetrics`: Kahn
+propagation, capacity caps, queueing latency, the 110 **closed-loop equilibrium** where
+`rps = users/(think + e2e)`); `components.ts` holds the per-kind benchmarks; `store.ts`
+persists to `localStorage`. **No `Stage`, no `TraceEvent`** — the Arena never pretends to
+have measured a real run, and `Date.now`/`Math.random` are forbidden in every pure module
+(a test greps for them).
+
+The **Challenges module** (129 → 133) sits on top of it:
+
+- **`slo.ts` (129)** — the measuring stick: four axes (**latency · headroom** are the
+  discriminating pair, **shed** is the extreme-regime backstop, **cost** is opt-in), a
+  verdict, the culprit box and a bilingual remediation hint. Two findings are worth knowing
+  before touching it, both **measured**: the closed loop turns overload into *latency*, not
+  429s (a design can sit at `shed = 0` and be unusable), and **cost alone rewards
+  under-provisioning** — the starved design is the cheapest one, which is why cost ships off
+  by default.
+- **`challenges.ts` (130)** — a library of problems with **locked givens** (the load belongs
+  to the problem, not the player) and pinned targets. Every challenge ships a **reference
+  solution** and a **broken starting design**, and library-walking tests assert the reference
+  passes with **≥20% slack** while the start misses by ≥20%. A recalibration therefore breaks
+  a *test*, never silently makes a challenge impossible — **re-tune the challenge, never
+  weaken the walk.**
+- **`chaos.ts` (131)** — failure injection as a **pure design transform**: `faults?` is an
+  additive field on `ArenaDesign` (the shape 117's `callShape` proved), so *every* derived
+  readout inherits it with no signature change. Faults are transient (never persisted).
+- **`progress.ts` (132)** — attempt history under its **own** `localStorage` key, so clearing
+  a canvas never erases a record of learning. Figures are denormalised on purpose: history
+  must not be rewritten by a later recalibration.
+- **`arena/judge.py` (133)** — the Arena's **only backend footprint**, and the one place spec
+  100's "frontend-only" no longer holds: `POST /api/arena/judge` runs two opposed personas in
+  parallel plus a synthesis (three real model calls — that independence is what earns the word
+  *debate*). Stateless: no DB, no trace, no `Stage`. **The arithmetic is authoritative** — the
+  response has no verdict field for the model to write into, and 120's user notes enter the
+  prompt inside an explicitly-delimited **untrusted** block.
+
 ## Docs
 
 - `docs/architecture.md` and `docs/how-it-works.md` — long-form walkthroughs of the running system (kept in sync with the code above).

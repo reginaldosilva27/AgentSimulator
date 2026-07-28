@@ -339,3 +339,73 @@ class TraceSummary(BaseModel):
     message: str
     answer: str
     events: list[TraceEvent]
+
+
+# --------------------------------------------------------------------------- #
+# 133-arena-ai-judge — the Arena judge's request/response models.
+#
+# MODELS ONLY. `Stage`, `Phase` and `TraceEvent` above are UNTOUCHED, and that is
+# deliberate: the judge is not part of the agentic request lifecycle the Simulator
+# visualises, so giving it a `Stage` would put a non-pipeline concern into the very
+# protocol §1 exists to protect. It is a plain request/response endpoint.
+# --------------------------------------------------------------------------- #
+
+ARENA_JUDGE_MAX_NODES = 60
+ARENA_JUDGE_MAX_NOTES = 40
+#: Mirrors the frontend's `NOTE_MAX` (120) — re-validated server-side.
+ARENA_JUDGE_NOTE_MAX = 280
+
+
+class ArenaJudgeObjective(BaseModel):
+    """One objective's outcome, as computed by the frontend's capacity model."""
+
+    metric: str = Field(..., min_length=1, max_length=40)
+    target: float
+    actual: float
+    met: bool
+
+
+class ArenaJudgeRequest(BaseModel):
+    """A design plus the figures the pure model already derived for it.
+
+    The metrics are supplied by the client on purpose — see the rationale in
+    ``app/arena/judge.py``: a second implementation of the capacity model in Python
+    would drift silently from the TypeScript one, and the judge would end up
+    critiquing numbers the user never saw.
+    """
+
+    #: One line per box: "id (kind) — N units, size, region, tier".
+    design: list[str] = Field(..., min_length=1, max_length=ARENA_JUDGE_MAX_NODES)
+    #: One line per connection.
+    connections: list[str] = Field(default_factory=list, max_length=200)
+    #: The load story in words ("16,000 users, one message every 20s").
+    load: str = Field(..., min_length=1, max_length=400)
+    #: The four aggregate figures, pre-formatted by the frontend.
+    metrics: list[str] = Field(..., min_length=1, max_length=20)
+    objectives: list[ArenaJudgeObjective] = Field(default_factory=list, max_length=10)
+    #: True iff EVERY tracked objective is met — the deterministic verdict, echoed
+    #: back unchanged. The model is told it is already decided.
+    verdict_met: bool
+    #: 120 — the architect's own annotations. UNTRUSTED user text (see judge.py).
+    notes: list[str] = Field(default_factory=list, max_length=ARENA_JUDGE_MAX_NOTES)
+    #: Which challenge this is, when any.
+    challenge: str | None = Field(default=None, max_length=80)
+    lang: str = Field(default="en", pattern="^(en|pt)$")
+    #: Optional model override, validated against the curated allowlist (422 if not).
+    model: str | None = None
+
+
+class ArenaJudgeResponse(BaseModel):
+    """The three-part critique.
+
+    Note what is ABSENT: any pass/fail or score field. The arithmetic is
+    authoritative, so there is nowhere for the model to write a verdict — structural,
+    not merely prompted. ``verdict_met`` is the value that was SENT, echoed back so a
+    client can confirm nothing was reinterpreted.
+    """
+
+    rigorous: str
+    pragmatic: str
+    agreed: str
+    verdict_met: bool
+    model: str

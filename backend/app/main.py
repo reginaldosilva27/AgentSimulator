@@ -25,7 +25,10 @@ from sse_starlette.sse import EventSourceResponse
 from .agent import run_agent
 from .agent.prompts import AGENT_PROMPT, GUARDRAILS_PROMPT
 from .agent.tools import agent_tool_specs
+from .arena.judge import JudgeInput, judge_design
+from .arena.ratelimit import FixedWindowLimiter
 from .config import (
+    MissingAPIKeyError,
     effective_embedding_model_async,
     effective_embedding_provider_async,
     effective_openai_key,
@@ -52,6 +55,7 @@ from .llm.models import (
     vertexai_model_ids,
     vertexai_models_payload,
 )
+from .llm.provider import get_provider
 from .mcp.client import get_registry
 from .network import DNS_ORIGIN_HOST, network_available, read_network, resolve_dns
 from .rag.chunking import CHUNK_PARAM_BOUNDS, ChunkStrategy
@@ -59,7 +63,17 @@ from .rag.ingest import active_chunk_strategy, build_index
 from .rag.ingestion import delete_document_vectors, delete_uploaded_vectors, ingest_uploaded
 from .rag.metrics import benchmark_queries
 from .rag.store import index_matches_model, is_indexed, reset_vectorstore_cache
-from .schemas import ChatRequest, Phase, SimulateFailure, SkillIn, SkillOut, Stage
+from .schemas import (
+    ARENA_JUDGE_NOTE_MAX,
+    ArenaJudgeRequest,
+    ArenaJudgeResponse,
+    ChatRequest,
+    Phase,
+    SimulateFailure,
+    SkillIn,
+    SkillOut,
+    Stage,
+)
 from .storage.object_store import (
     clear_objects,
     delete_document_objects,
@@ -1620,3 +1634,101 @@ async def update_skill(skill_id: str, skill: SkillIn):
 async def delete_skill(skill_id: str):
     """Delete a skill from the catalog."""
     return await get_store().delete_skill(skill_id)
+
+
+# --- 133-arena-ai-judge: the Arena's qualitative design critique -------------
+#
+# The Arena's ONLY backend route. Stateless: it reads no database and writes
+# nothing, emits no `TraceEvent` and has no `Stage` (the judge is not part of the
+# agentic request lifecycle — see app/arena/judge.py). This is the one place the
+# "Arena is frontend-only" claim from spec 100 no longer holds, deliberately and
+# as narrowly as possible: a language judge cannot be mocked without violating §3.
+
+_arena_judge_limiter = FixedWindowLimiter(
+    limit=get_settings().arena_judge_rate_limit,
+    window_seconds=get_settings().arena_judge_rate_window_seconds,
+)
+
+
+@app.post("/api/arena/judge", response_model=ArenaJudgeResponse)
+async def arena_judge(req: ArenaJudgeRequest) -> ArenaJudgeResponse:
+    """Critique an Arena design qualitatively, grounded in its computed metrics."""
+    settings = get_settings()
+
+    # A blank override is rejected outright. NOTE: there is deliberately no curated
+    # allowlist gate here — 078-openai-key-ui removed it app-wide (models are listed
+    # live from the account now), so re-introducing one for the judge alone would
+    # both contradict the app's own policy and break the day OpenAI ships a model.
+    if req.model is not None and not req.model.strip():
+        raise HTTPException(status_code=422, detail="model cannot be blank")
+
+    # Bound the untrusted text server-side (the FE caps it too — 120's NOTE_MAX).
+    for note in req.notes:
+        if len(note) > ARENA_JUDGE_NOTE_MAX:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "note too long", "max": ARENA_JUDGE_NOTE_MAX},
+            )
+
+    # Rate guard BEFORE the provider is touched: an exhausted window must never
+    # spend a token.
+    if not _arena_judge_limiter.allow():
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "judge rate limit reached",
+                "limit": settings.arena_judge_rate_limit,
+                "window_seconds": settings.arena_judge_rate_window_seconds,
+            },
+        )
+
+    resolved_model = req.model or settings.arena_judge_model or settings.llm_model
+    try:
+        provider = get_provider(model=resolved_model)
+    except MissingAPIKeyError as exc:
+        # Honest unavailability (§3): a specific, machine-readable error — never a
+        # fabricated critique.
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "no_provider", "message": str(exc)},
+        ) from exc
+
+    objectives = (
+        "\n".join(
+            f"- {o.metric}: target {o.target}, actual {o.actual} — {'MET' if o.met else 'NOT MET'}"
+            for o in req.objectives
+        )
+        or "- (no objectives were being tracked)"
+    )
+    verdict_line = (
+        "Every tracked objective is MET."
+        if req.verdict_met
+        else "At least one tracked objective is NOT MET."
+    )
+
+    result = await judge_design(
+        provider,
+        JudgeInput(
+            design_summary="\n".join(
+                ["Boxes:", *(f"- {line}" for line in req.design)]
+                + (
+                    ["Connections:", *(f"- {c}" for c in req.connections)]
+                    if req.connections
+                    else []
+                )
+            ),
+            metrics_summary="\n".join([f"Load: {req.load}", *(f"- {m}" for m in req.metrics)]),
+            objectives_summary=f"{objectives}\n{verdict_line}",
+            notes=list(req.notes),
+            lang=req.lang,
+        ),
+    )
+
+    return ArenaJudgeResponse(
+        rigorous=result.rigorous,
+        pragmatic=result.pragmatic,
+        agreed=result.agreed,
+        # Echoed UNCHANGED: the judge cannot reinterpret the arithmetic.
+        verdict_met=req.verdict_met,
+        model=resolved_model,
+    )

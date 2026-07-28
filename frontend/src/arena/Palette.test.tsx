@@ -6,12 +6,15 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { UI } from "../i18n/strings";
 import { useLang } from "../i18n";
-import { PALETTE_GROUPS } from "./components";
+import { KIND_META, PALETTE_GROUPS, PALETTE_ORDER } from "./components";
+import { CHALLENGES } from "./challenges";
+import { useArena } from "./store";
 import { ARENA_DND_MIME, Palette } from "./Palette";
 
 afterEach(() => {
   cleanup();
   useLang.setState({ lang: "en" });
+  useArena.setState({ challengeId: null, sandbox: null });
 });
 
 describe("126 — grouped palette rendering (AC2)", () => {
@@ -80,5 +83,29 @@ describe("126 — palette search (AC3)", () => {
     };
     fireEvent.dragStart(item, { dataTransfer });
     expect(store[ARENA_DND_MIME]).toBe("semanticCache");
+  });
+});
+
+describe("130 AC8 — a challenge can restrict the palette", () => {
+  it("offers the full catalog in the sandbox", () => {
+    render(<Palette />);
+    expect(screen.getByText(KIND_META.llm.label.en)).toBeTruthy();
+    expect(screen.getByText(KIND_META.queue.label.en)).toBeTruthy();
+  });
+
+  it("offers exactly the allowed kinds inside a restricting challenge", () => {
+    const restricted = CHALLENGES.find((c) => c.allowedKinds)!;
+    expect(restricted, "no shipped challenge restricts its palette").toBeTruthy();
+    useArena.getState().enterChallenge(restricted.id);
+
+    render(<Palette />);
+    const allowed = new Set(restricted.allowedKinds!);
+    // Assert on each kind's DESCRIPTION: labels collide with group titles
+    // ("Client" is both), descriptions are unique per kind.
+    for (const kind of PALETTE_ORDER) {
+      const desc = KIND_META[kind].description.en;
+      if (allowed.has(kind)) expect(screen.getByText(desc), `${kind} hidden`).toBeTruthy();
+      else expect(screen.queryByText(desc), `${kind} offered`).toBeNull();
+    }
   });
 });
